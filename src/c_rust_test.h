@@ -1,15 +1,16 @@
-#ifndef _C_RUST_TEST_H_
-#define _C_RUST_TEST_H_
-#include<stdint.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
 
-struct route_entry {
-	uint32_t prefix;
-	uint32_t next_hop;
-	uint32_t out_ifindex;
-};
+typedef struct {
+  uint32_t prefix;
+  uint32_t next_hop;
+  uint32_t out_ifindex;
+} RouteEntry;
 
-extern int route_add(uint32_t _prefix, struct route_entry *entry);
-extern int route_lookup(uint32_t _prefix, struct route_entry *entry);
-extern int route_delete(uint32_t _prefix);
+int32_t route_add(uint32_t _prefix, RouteEntry *_entry);
 
-#endif
+int32_t route_delete(uint32_t _prefix);
+
+int32_t route_lookup(uint32_t _prefix, RouteEntry *_entry);

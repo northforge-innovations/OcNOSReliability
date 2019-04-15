@@ -3,6 +3,7 @@ extern crate lazy_static;
 use std::sync::Mutex;
 use std::collections::HashMap;
 
+#[repr(C)]
 pub struct RouteEntry {
     prefix:  u32,
     next_hop: u32,
@@ -29,7 +30,7 @@ lazy_static! {
 }
 
 #[no_mangle]
-pub extern fn route_add(_prefix: u32, _entry: *mut RouteEntry) -> i32 {
+pub extern "C" fn route_add(_prefix: u32, _entry: *mut RouteEntry) -> i32 {
     let mut entry: Box<RouteEntry>;
     unsafe {
         entry = Box::from_raw(_entry); 
@@ -46,7 +47,7 @@ pub extern fn route_add(_prefix: u32, _entry: *mut RouteEntry) -> i32 {
 }
 
 #[no_mangle]
-pub extern fn route_lookup(_prefix: u32, _entry: *mut RouteEntry) -> i32 {
+pub extern "C" fn route_lookup(_prefix: u32, _entry: *mut RouteEntry) -> i32 {
    if ROUTE_TABLE.lock().unwrap().contains_key(&_prefix) {
         let re = &ROUTE_TABLE.lock().unwrap()[&_prefix];
         unsafe {
@@ -62,7 +63,7 @@ pub extern fn route_lookup(_prefix: u32, _entry: *mut RouteEntry) -> i32 {
 }
 
 #[no_mangle]
-pub extern fn route_delete(_prefix: u32) -> i32 {
+pub extern "C" fn route_delete(_prefix: u32) -> i32 {
     if ROUTE_TABLE.lock().unwrap().contains_key(&_prefix) {
         println!("deleting existing entry");
         ROUTE_TABLE.lock().unwrap().remove(&_prefix);

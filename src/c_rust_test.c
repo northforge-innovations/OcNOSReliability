@@ -3,7 +3,7 @@
 
 void c_rust_test()
 {
-	struct route_entry entry;
+	RouteEntry entry;
 	entry.prefix = 1;
 	entry.next_hop = 2;
 	entry.out_ifindex = 3;

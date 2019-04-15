@@ -9,3 +9,4 @@ build = "build.rs"
 data_storage_api = { path = "data_storage_api" }
 [build-dependencies]
 cc = "1.0"
+cbindgen = "*"
