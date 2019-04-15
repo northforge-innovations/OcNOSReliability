@@ -28,24 +28,47 @@ lazy_static! {
     static ref ROUTE_TABLE: Mutex<HashMap<u32, Box<RouteEntry>>> = Mutex::new(HashMap::new());
 }
 
-pub fn route_add(_prefix: u32, _entry: Box<RouteEntry>) {
-    println!("route_add: key: {} prefix: {} next_hop: {} out_ifindex: {}",_prefix,_entry.prefix, _entry.next_hop,_entry.out_ifindex);
-    ROUTE_TABLE.lock().unwrap().insert(_prefix, _entry);
-}
-
-pub fn route_lookup(_prefix: u32, _entry: &mut RouteEntry) -> Result<i32, i32> {
-   if ROUTE_TABLE.lock().unwrap().contains_key(&_prefix) {
-        let re = &ROUTE_TABLE.lock().unwrap()[&_prefix];
-        _entry.prefix = re.prefix;
-        _entry.next_hop = re.next_hop;
-        _entry.out_ifindex = re.out_ifindex;
-        Ok(0)
+#[no_mangle]
+pub extern fn route_add(_prefix: u32, _entry: *mut RouteEntry) -> i32 {
+    let mut entry: Box<RouteEntry>;
+    unsafe {
+        entry = Box::from_raw(_entry); 
+    }
+    println!("route_add: key: {} prefix: {} next_hop: {} out_ifindex: {}",_prefix,entry.prefix, entry.next_hop,entry.out_ifindex);
+    if ROUTE_TABLE.lock().unwrap().contains_key(&_prefix) {
+        -1
     } else {
-        Err(-1)
+        let new_entry = Box::new(RouteEntry::new(entry.prefix,entry.next_hop,entry.out_ifindex));
+        let m_entry = Box::into_raw(entry);
+        ROUTE_TABLE.lock().unwrap().insert(_prefix, new_entry);
+        0
     }
 }
 
-pub fn route_delete(_prefix: u32) -> Result<i32, i32> {
-    ROUTE_TABLE.lock().unwrap().remove(&_prefix);
-    Ok(0)
+#[no_mangle]
+pub extern fn route_lookup(_prefix: u32, _entry: *mut RouteEntry) -> i32 {
+   if ROUTE_TABLE.lock().unwrap().contains_key(&_prefix) {
+        let re = &ROUTE_TABLE.lock().unwrap()[&_prefix];
+        unsafe {
+            println!("route_lookup prefix {}, found prefix {} next_hop {} out_ifindex {}",_prefix,re.prefix,re.next_hop,re.out_ifindex);
+            (*_entry).prefix = re.prefix;
+            (*_entry).next_hop = re.next_hop;
+            (*_entry).out_ifindex = re.out_ifindex;
+        }
+        0
+    } else {
+        -1
+    }
+}
+
+#[no_mangle]
+pub extern fn route_delete(_prefix: u32) -> i32 {
+    if ROUTE_TABLE.lock().unwrap().contains_key(&_prefix) {
+        println!("deleting existing entry");
+        ROUTE_TABLE.lock().unwrap().remove(&_prefix);
+        println!("done");
+        0
+    } else {
+        -1
+    }
 }
