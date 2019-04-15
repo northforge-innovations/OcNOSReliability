@@ -6,7 +6,17 @@ edition = "2018"
 build = "build.rs"
 
 [dependencies]
-data_storage_api = { path = "data_storage_api" }
+lazy_static = "*"
+
 [build-dependencies]
 cc = "1.0"
 cbindgen = "*"
+
+[[bin]]
+name = "poc"
+path = "src/main.rs"
+doc = false
+[lib]
+name = "data_storage_api"
+path = "src/lib.rs"
+crate-type=["rlib", "cdylib"]

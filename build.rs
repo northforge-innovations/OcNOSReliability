@@ -4,7 +4,7 @@ extern crate cc;
 use std::env;
 
 fn main() {
-    let crate_dir = String::from("data_storage_api");
+    let crate_dir = String::from(".");
 
     cbindgen::Builder::new()
       .with_crate(crate_dir)

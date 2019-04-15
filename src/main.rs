@@ -1,4 +1,5 @@
-use data_storage_api::*;
+//use data_storage_api::*;
+extern crate data_storage_api;
 
 extern {
     fn c_rust_test();
