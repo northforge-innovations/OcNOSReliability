@@ -1,12 +1,16 @@
-//use data_storage_api::*;
+#[cfg(test)]
+mod tests {
 extern crate data_storage_api;
 
 extern {
-    fn c_rust_test();
+    fn c_rust_test() -> i32;
 }
 
+#[test]
 fn main() {
     unsafe {
-        c_rust_test();
+        let rc = c_rust_test();
+	assert_eq!(rc, 0);
     }
+}
 }

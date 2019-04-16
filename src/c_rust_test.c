@@ -1,16 +1,22 @@
 #include <stdio.h>
 #include "c_rust_test.h"
 
-void c_rust_test()
+int c_rust_test()
 {
+	int rc = 0;
 	RouteEntry entry;
 	entry.prefix = 1;
 	entry.next_hop = 2;
 	entry.out_ifindex = 3;
 	printf("%s %d\n",__FILE__,__LINE__);
-	route_add(1, &entry);
+	rc = route_add(1, &entry);
+	if (rc != 0)
+		return rc;
 	memset(&entry,0,sizeof(entry));
-	route_lookup(1,&entry);
+	rc = route_lookup(1,&entry);
+	if (rc != 0)
+		return rc;
 	printf("%s %d %x %x %x\n",__FILE__,__LINE__,entry.prefix,entry.next_hop,entry.out_ifindex);
-	route_delete(1);
+	rc = route_delete(1);
+	return rc;
 }

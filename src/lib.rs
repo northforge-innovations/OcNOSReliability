@@ -40,7 +40,7 @@ pub extern "C" fn route_add(_prefix: u32, _entry: *mut RouteEntry) -> i32 {
         -1
     } else {
         let new_entry = Box::new(RouteEntry::new(entry.prefix,entry.next_hop,entry.out_ifindex));
-        let m_entry = Box::into_raw(entry);
+        let _m_entry = Box::into_raw(entry);
         ROUTE_TABLE.lock().unwrap().insert(_prefix, new_entry);
         0
     }
