@@ -9,7 +9,6 @@ int c_rust_route_entry_test()
 	entry.mask = 0xFFFFFF00;
 	entry.next_hop = 2;
 	entry.out_ifindex = 3;
-	printf("%s %d\n",__FILE__,__LINE__);
 	rc = route_add(1, &entry);
 	if (rc != 0)
 		return rc;
@@ -28,7 +27,6 @@ int c_rust_peer_entry_test()
 	PeerEntry entry;
 	entry.prefix = 1;
 	entry.out_ifindex = 3;
-	printf("%s %d\n",__FILE__,__LINE__);
 	rc = peer_add(1, &entry);
 	if (rc != 0)
 		return rc;
@@ -47,7 +45,6 @@ int c_rust_peer_route_entry_test()
 	PeerEntry peer_entry;
 	peer_entry.prefix = 1;
 	peer_entry.out_ifindex = 3;
-	printf("%s %d\n",__FILE__,__LINE__);
 	rc = peer_add(1, &peer_entry);
 	if (rc != 0)
 		return rc;
@@ -69,9 +66,35 @@ int c_rust_peer_route_entry_test()
 	if (rc != 0)
 		return rc;
 	printf("%s %d %x %x %x %x\n",__FILE__,__LINE__,route_entry.prefix,route_entry.mask,route_entry.next_hop,route_entry.out_ifindex);
-	rc = peer_route_delete(peer_entry.prefix,5);
+	// adding one more peer
+	peer_entry.prefix = 2;
+	peer_entry.out_ifindex = 4;
+	rc = peer_add(2, &peer_entry);
+	if (rc != 0)
+		return rc;
+	
+	rc = peer_route_add(peer_entry.prefix,&route_entry);
+	if (rc != 0)
+		return rc;
+	memset((char *)&route_entry,0,sizeof(route_entry));
+	rc = peer_route_lookup(1,5, &route_entry);
+	if (rc != 0)
+		return rc;
+	printf("%s %d %x %x %x %x\n",__FILE__,__LINE__,route_entry.prefix,route_entry.mask,route_entry.next_hop,route_entry.out_ifindex);
+	memset((char *)&route_entry,0,sizeof(route_entry));
+	rc = peer_route_lookup(2,5, &route_entry);
+	if (rc != 0)
+		return rc;
+	printf("%s %d %x %x %x %x\n",__FILE__,__LINE__,route_entry.prefix,route_entry.mask,route_entry.next_hop,route_entry.out_ifindex);
+	rc = peer_route_delete(1,5);
+	if (rc != 0)
+		return rc;
+	rc = peer_route_delete(2,5);
 	if (rc != 0)
 		return rc;
 	rc = peer_delete(1);
+	if (rc != 0)
+		return rc;
+	rc = peer_delete(2);
 	return rc;
 }

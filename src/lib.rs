@@ -1,6 +1,6 @@
 #[macro_use]
 extern crate lazy_static;
-use std::sync::Mutex;
+use std::sync::{Mutex, Arc};
 use std::collections::HashMap;
 
 #[repr(C)]
@@ -36,7 +36,7 @@ impl RouteEntry {
 }
 
 lazy_static! {
-    static ref ROUTE_TABLE: Mutex<HashMap<u32, Box<RouteEntry>>> = Mutex::new(HashMap::new());
+    static ref ROUTE_TABLE: Mutex<HashMap<u32, Arc<Box<RouteEntry>>>> = Mutex::new(HashMap::new());
 }
 
 lazy_static! {
@@ -53,7 +53,7 @@ pub extern "C" fn route_add(_prefix: u32,_entry: *mut RouteEntry) -> i32 {
     if ROUTE_TABLE.lock().unwrap().contains_key(&_prefix) {
         -1
     } else {
-        let new_entry = Box::new(RouteEntry::new(entry.prefix,entry.mask,entry.next_hop,entry.out_ifindex));
+        let new_entry = Arc::new(Box::new(RouteEntry::new(entry.prefix,entry.mask,entry.next_hop,entry.out_ifindex)));
         let _m_entry = Box::into_raw(entry);
         ROUTE_TABLE.lock().unwrap().insert(_prefix, new_entry);
         0
@@ -92,7 +92,7 @@ pub extern "C" fn route_delete(_prefix: u32) -> i32 {
 struct PeerIntEntry {
 	prefix: u32,
 	out_ifindex: u32,
-	peer_route_table: Mutex<HashMap<u32, Box<RouteEntry>>>,
+	peer_route_table: Mutex<HashMap<u32, Arc<Box<RouteEntry>>>>,
 }
 
 impl PeerIntEntry {
@@ -162,11 +162,21 @@ pub extern "C" fn peer_route_add(_peer_prefix: u32,_entry: *mut RouteEntry) -> i
     	}
         if re.peer_route_table.lock().unwrap().contains_key(&entry.prefix) {
 	    -2
-        } else {
-	    let new_entry = Box::new(RouteEntry::new(entry.prefix,entry.mask,entry.next_hop,entry.out_ifindex));
+        } else { 
+	    let route_entry: Arc<Box<RouteEntry>>;
+	    if ROUTE_TABLE.lock().unwrap().contains_key(&entry.prefix) {
+		let existing_entry: &Arc<Box<RouteEntry>> = &ROUTE_TABLE.lock().unwrap()[&entry.prefix];
+		route_entry = Arc::clone(&existing_entry);
+		println!("cloned route entry for peer");
+	    } else {
+		let new_entry: Arc<Box<RouteEntry>> = Arc::new(Box::new(RouteEntry::new(entry.prefix,entry.mask,entry.next_hop,entry.out_ifindex)));
+		route_entry = Arc::clone(&new_entry);
+		ROUTE_TABLE.lock().unwrap().insert(entry.prefix, new_entry);
+		println!("new route entry for peer");
+	    } 
             let _m_entry = Box::into_raw(entry);
-            println!("peer_route_add: key: {} prefix: {} out_ifindex: {}",new_entry.prefix,new_entry.prefix, new_entry.out_ifindex);
-            re.peer_route_table.lock().unwrap().insert(new_entry.prefix, new_entry); 
+            println!("peer_route_add: key: {} prefix: {} out_ifindex: {}",route_entry.prefix,route_entry.prefix, route_entry.out_ifindex);
+            re.peer_route_table.lock().unwrap().insert(route_entry.prefix, route_entry); 
             0
         }
     } else {
