@@ -27,8 +27,4 @@ int32_t peer_route_delete(uint32_t _peer_prefix, uint32_t _route_prefix);
 
 int32_t peer_route_lookup(uint32_t _peer_prefix, uint32_t _route_prefix, RouteEntry *_entry);
 
-int32_t route_add(uint32_t _prefix, RouteEntry *_entry);
-
-int32_t route_delete(uint32_t _prefix);
-
 int32_t route_lookup(uint32_t _prefix, RouteEntry *_entry);

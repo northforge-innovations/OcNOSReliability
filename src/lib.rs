@@ -1,73 +1,89 @@
 #[macro_use]
 extern crate lazy_static;
-use std::sync::{Mutex, Arc};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 #[repr(C)]
 pub struct RouteEntry {
-    prefix:  u32,
-    mask:    u32,
+    prefix: u32,
+    mask: u32,
     next_hop: u32,
-    out_ifindex: u32
+    out_ifindex: u32,
 }
 
 #[repr(C)]
 pub struct PeerEntry {
-    prefix:  u32,
-    out_ifindex: u32
-}
-
-impl RouteEntry {
-    pub fn new(_prefix: u32, _mask: u32, _next_hop: u32, _out_ifindex: u32) -> RouteEntry {
-        RouteEntry { prefix: _prefix, mask: _mask, next_hop: _next_hop, out_ifindex: _out_ifindex }
-    }
-    pub fn get_prefix(&self) -> u32 {
-        self.prefix
-    }
-    pub fn get_mask(&self) -> u32 {
-	self.mask
-    }
-    pub fn get_next_hop(&self) -> u32 {
-        self.next_hop
-    }
-    pub fn get_out_ifindex(&self) -> u32 {
-        self.out_ifindex
-    }
+    prefix: u32,
+    out_ifindex: u32,
 }
 
 lazy_static! {
-    static ref ROUTE_TABLE: Mutex<HashMap<u32, Arc<Box<RouteEntry>>>> = Mutex::new(HashMap::new());
+    static ref ROUTE_TABLE: Mutex<HashMap<u32, Arc<Box<RouteIntEntry>>>> =
+        Mutex::new(HashMap::new());
 }
 
 lazy_static! {
-    static ref PEER_TABLE: Mutex<HashMap<u32, Box<PeerIntEntry>>> = Mutex::new(HashMap::new());
+    static ref PEER_TABLE: Mutex<HashMap<u32, Arc<Box<PeerIntEntry>>>> = Mutex::new(HashMap::new());
 }
 
-#[no_mangle]
-pub extern "C" fn route_add(_prefix: u32,_entry: *mut RouteEntry) -> i32 {
-    let mut entry: Box<RouteEntry>;
-    unsafe {
-        entry = Box::from_raw(_entry); 
+struct RouteIntEntry {
+    prefix: u32,
+    mask: u32,
+    next_hop: u32,
+    out_ifindex: u32,
+    peer_table: Mutex<HashMap<u32, Arc<Box<PeerIntEntry>>>>,
+}
+
+impl RouteIntEntry {
+    pub fn new(_prefix: u32, _mask: u32, _next_hop: u32, _out_ifindex: u32) -> RouteIntEntry {
+        RouteIntEntry {
+            prefix: _prefix,
+            mask: _mask,
+            next_hop: _next_hop,
+            out_ifindex: _out_ifindex,
+            peer_table: Mutex::new(HashMap::new()),
+        }
     }
-    println!("route_add: key: {} prefix: {} mask: {} next_hop: {} out_ifindex: {}",_prefix,entry.prefix, entry.mask,entry.next_hop,entry.out_ifindex);
-    if ROUTE_TABLE.lock().unwrap().contains_key(&_prefix) {
-        -1
-    } else {
-        let new_entry = Arc::new(Box::new(RouteEntry::new(entry.prefix,entry.mask,entry.next_hop,entry.out_ifindex)));
-        let _m_entry = Box::into_raw(entry);
-        ROUTE_TABLE.lock().unwrap().insert(_prefix, new_entry);
-        0
+    pub fn AddPeer(&self, peer: Arc<Box<PeerIntEntry>>) -> i32 {
+        if self.peer_table.lock().unwrap().contains_key(&peer.prefix) {
+            -1
+        } else {
+            self.peer_table.lock().unwrap().insert(peer.prefix, peer);
+            0
+        }
+    }
+    pub fn DeletePeer(&self, _peer_prefix: u32) -> i32 {
+        if self.peer_table.lock().unwrap().contains_key(&_peer_prefix) {
+            self.peer_table.lock().unwrap().remove(&_peer_prefix);
+            0
+        } else {
+            -1
+        }
+    }
+    pub fn PeerLookup(&self, _peer_prefix: u32, peer: &mut Arc<Box<PeerIntEntry>>) -> i32 {
+        if self.peer_table.lock().unwrap().contains_key(&_peer_prefix) {
+            *peer = Arc::clone(&self.peer_table.lock().unwrap()[&_peer_prefix]);
+            0
+        } else {
+            -1
+        }
+    }
+    pub fn GetNumberOfPeers(&self) -> usize {
+        self.peer_table.lock().unwrap().len()
     }
 }
 
 #[no_mangle]
 pub extern "C" fn route_lookup(_prefix: u32, _entry: *mut RouteEntry) -> i32 {
-   if ROUTE_TABLE.lock().unwrap().contains_key(&_prefix) {
+    if ROUTE_TABLE.lock().unwrap().contains_key(&_prefix) {
         let re = &ROUTE_TABLE.lock().unwrap()[&_prefix];
         unsafe {
-            println!("route_lookup prefix {}, found prefix {} mask {} next_hop {} out_ifindex {}",_prefix,re.prefix,re.mask,re.next_hop,re.out_ifindex);
+            println!(
+                "route_lookup prefix {}, found prefix {} mask {} next_hop {} out_ifindex {}",
+                _prefix, re.prefix, re.mask, re.next_hop, re.out_ifindex
+            );
             (*_entry).prefix = re.prefix;
-	    (*_entry).mask = re.mask;
+            (*_entry).mask = re.mask;
             (*_entry).next_hop = re.next_hop;
             (*_entry).out_ifindex = re.out_ifindex;
         }
@@ -77,27 +93,19 @@ pub extern "C" fn route_lookup(_prefix: u32, _entry: *mut RouteEntry) -> i32 {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn route_delete(_prefix: u32) -> i32 {
-    if ROUTE_TABLE.lock().unwrap().contains_key(&_prefix) {
-        println!("deleting existing entry");
-        ROUTE_TABLE.lock().unwrap().remove(&_prefix);
-        println!("done");
-        0
-    } else {
-        -1
-    }
-}
-
 struct PeerIntEntry {
-	prefix: u32,
-	out_ifindex: u32,
-	peer_route_table: Mutex<HashMap<u32, Arc<Box<RouteEntry>>>>,
+    prefix: u32,
+    out_ifindex: u32,
+    peer_route_table: Mutex<HashMap<u32, Arc<Box<RouteIntEntry>>>>,
 }
 
 impl PeerIntEntry {
     pub fn new(_prefix: u32, _out_ifindex: u32) -> PeerIntEntry {
-        PeerIntEntry { prefix: _prefix, out_ifindex: _out_ifindex, peer_route_table: Mutex::new(HashMap::new()) }
+        PeerIntEntry {
+            prefix: _prefix,
+            out_ifindex: _out_ifindex,
+            peer_route_table: Mutex::new(HashMap::new()),
+        }
     }
     pub fn get_prefix(&self) -> u32 {
         self.prefix
@@ -108,16 +116,20 @@ impl PeerIntEntry {
 }
 
 #[no_mangle]
-pub extern "C" fn peer_add(_prefix: u32,_entry: *mut PeerEntry) -> i32 {
+pub extern "C" fn peer_add(_prefix: u32, _entry: *mut PeerEntry) -> i32 {
     let mut entry: Box<PeerEntry>;
     unsafe {
-        entry = Box::from_raw(_entry); 
+        entry = Box::from_raw(_entry);
     }
-    println!("peer_add: key: {} prefix: {} out_ifindex: {}",_prefix,entry.prefix, entry.out_ifindex);
+    println!(
+        "peer_add: key: {} prefix: {} out_ifindex: {}",
+        _prefix, entry.prefix, entry.out_ifindex
+    );
     if PEER_TABLE.lock().unwrap().contains_key(&_prefix) {
+        let _m_entry = Box::into_raw(entry);
         -1
     } else {
-        let new_entry = Box::new(PeerIntEntry::new(entry.prefix,entry.out_ifindex));
+        let new_entry = Arc::new(Box::new(PeerIntEntry::new(entry.prefix, entry.out_ifindex)));
         let _m_entry = Box::into_raw(entry);
         PEER_TABLE.lock().unwrap().insert(_prefix, new_entry);
         0
@@ -126,10 +138,13 @@ pub extern "C" fn peer_add(_prefix: u32,_entry: *mut PeerEntry) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn peer_lookup(_prefix: u32, _entry: *mut PeerEntry) -> i32 {
-   if PEER_TABLE.lock().unwrap().contains_key(&_prefix) {
+    if PEER_TABLE.lock().unwrap().contains_key(&_prefix) {
         let re = &PEER_TABLE.lock().unwrap()[&_prefix];
         unsafe {
-            println!("peer_lookup prefix {}, found prefix {} out_ifindex {}",_prefix,re.prefix,re.out_ifindex);
+            println!(
+                "peer_lookup prefix {}, found prefix {} out_ifindex {}",
+                _prefix, re.prefix, re.out_ifindex
+            );
             (*_entry).prefix = re.prefix;
             (*_entry).out_ifindex = re.out_ifindex;
         }
@@ -141,9 +156,20 @@ pub extern "C" fn peer_lookup(_prefix: u32, _entry: *mut PeerEntry) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn peer_delete(_prefix: u32) -> i32 {
-    if PEER_TABLE.lock().unwrap().contains_key(&_prefix) {
+    let mut peer_gt = PEER_TABLE.lock().unwrap();
+    if peer_gt.contains_key(&_prefix) {
+        {
+            let mut peer_rt = peer_gt[&_prefix].peer_route_table.lock().unwrap();
+            let mut global_rt = ROUTE_TABLE.lock().unwrap();
+            for val in peer_rt.values() {
+                val.DeletePeer(_prefix);
+                if val.GetNumberOfPeers() == 0 {
+                    global_rt.remove(&val.prefix);
+                }
+            }
+        }
         println!("deleting existing entry");
-        PEER_TABLE.lock().unwrap().remove(&_prefix);
+        peer_gt.remove(&_prefix);
         println!("done");
         0
     } else {
@@ -152,31 +178,53 @@ pub extern "C" fn peer_delete(_prefix: u32) -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn peer_route_add(_peer_prefix: u32,_entry: *mut RouteEntry) -> i32 {
+pub extern "C" fn peer_route_add(_peer_prefix: u32, _entry: *mut RouteEntry) -> i32 {
     if PEER_TABLE.lock().unwrap().contains_key(&_peer_prefix) {
         let re = &PEER_TABLE.lock().unwrap()[&_peer_prefix];
-        println!("peer_route_add: found prefix {} out_ifindex {}",re.prefix,re.out_ifindex);
+        println!(
+            "peer_route_add: found prefix {} out_ifindex {}",
+            re.prefix, re.out_ifindex
+        );
         let mut entry: Box<RouteEntry>;
-	unsafe {
-        	entry = Box::from_raw(_entry); 
-    	}
-        if re.peer_route_table.lock().unwrap().contains_key(&entry.prefix) {
-	    -2
-        } else { 
-	    let route_entry: Arc<Box<RouteEntry>>;
-	    if ROUTE_TABLE.lock().unwrap().contains_key(&entry.prefix) {
-		let existing_entry: &Arc<Box<RouteEntry>> = &ROUTE_TABLE.lock().unwrap()[&entry.prefix];
-		route_entry = Arc::clone(&existing_entry);
-		println!("cloned route entry for peer");
-	    } else {
-		let new_entry: Arc<Box<RouteEntry>> = Arc::new(Box::new(RouteEntry::new(entry.prefix,entry.mask,entry.next_hop,entry.out_ifindex)));
-		route_entry = Arc::clone(&new_entry);
-		ROUTE_TABLE.lock().unwrap().insert(entry.prefix, new_entry);
-		println!("new route entry for peer");
-	    } 
+        unsafe {
+            entry = Box::from_raw(_entry);
+        }
+        if re
+            .peer_route_table
+            .lock()
+            .unwrap()
+            .contains_key(&entry.prefix)
+        {
             let _m_entry = Box::into_raw(entry);
-            println!("peer_route_add: key: {} prefix: {} out_ifindex: {}",route_entry.prefix,route_entry.prefix, route_entry.out_ifindex);
-            re.peer_route_table.lock().unwrap().insert(route_entry.prefix, route_entry); 
+            -2
+        } else {
+            let route_entry: Arc<Box<RouteIntEntry>>;
+            if ROUTE_TABLE.lock().unwrap().contains_key(&entry.prefix) {
+                let existing_entry: &Arc<Box<RouteIntEntry>> =
+                    &ROUTE_TABLE.lock().unwrap()[&entry.prefix];
+                route_entry = Arc::clone(&existing_entry);
+                println!("cloned route entry for peer");
+            } else {
+                let new_entry: Arc<Box<RouteIntEntry>> = Arc::new(Box::new(RouteIntEntry::new(
+                    entry.prefix,
+                    entry.mask,
+                    entry.next_hop,
+                    entry.out_ifindex,
+                )));
+                route_entry = Arc::clone(&new_entry);
+                ROUTE_TABLE.lock().unwrap().insert(entry.prefix, new_entry);
+                println!("new route entry for peer");
+            }
+            route_entry.AddPeer(Arc::clone(re));
+            let _m_entry = Box::into_raw(entry);
+            println!(
+                "peer_route_add: key: {} prefix: {} out_ifindex: {}",
+                route_entry.prefix, route_entry.prefix, route_entry.out_ifindex
+            );
+            re.peer_route_table
+                .lock()
+                .unwrap()
+                .insert(route_entry.prefix, route_entry);
             0
         }
     } else {
@@ -185,22 +233,34 @@ pub extern "C" fn peer_route_add(_peer_prefix: u32,_entry: *mut RouteEntry) -> i
 }
 
 #[no_mangle]
-pub extern "C" fn peer_route_lookup(_peer_prefix: u32, _route_prefix: u32,_entry: *mut RouteEntry) -> i32 {
-   if PEER_TABLE.lock().unwrap().contains_key(&_peer_prefix) {
+pub extern "C" fn peer_route_lookup(
+    _peer_prefix: u32,
+    _route_prefix: u32,
+    _entry: *mut RouteEntry,
+) -> i32 {
+    if PEER_TABLE.lock().unwrap().contains_key(&_peer_prefix) {
         let pe = &PEER_TABLE.lock().unwrap()[&_peer_prefix];
-        if pe.peer_route_table.lock().unwrap().contains_key(&_route_prefix) {
-	    let re = &pe.peer_route_table.lock().unwrap()[&_route_prefix];
-	    unsafe {
-        	    println!("peer_route_lookup peer_prefix {}, found prefix {}",_peer_prefix,_route_prefix);
-	            (*_entry).prefix = re.prefix;
-		    (*_entry).mask = re.mask;
-		    (*_entry).next_hop = re.next_hop;
-        	    (*_entry).out_ifindex = re.out_ifindex;
+        if pe
+            .peer_route_table
+            .lock()
+            .unwrap()
+            .contains_key(&_route_prefix)
+        {
+            let re = &pe.peer_route_table.lock().unwrap()[&_route_prefix];
+            unsafe {
+                println!(
+                    "peer_route_lookup peer_prefix {}, found prefix {}",
+                    _peer_prefix, _route_prefix
+                );
+                (*_entry).prefix = re.prefix;
+                (*_entry).mask = re.mask;
+                (*_entry).next_hop = re.next_hop;
+                (*_entry).out_ifindex = re.out_ifindex;
             }
-	    0
+            0
         } else {
-	    -2 
-	}
+            -2
+        }
     } else {
         -1
     }
@@ -208,14 +268,29 @@ pub extern "C" fn peer_route_lookup(_peer_prefix: u32, _route_prefix: u32,_entry
 
 #[no_mangle]
 pub extern "C" fn peer_route_delete(_peer_prefix: u32, _route_prefix: u32) -> i32 {
-   if PEER_TABLE.lock().unwrap().contains_key(&_peer_prefix) {
-        let re = &PEER_TABLE.lock().unwrap()[&_peer_prefix];
-        if re.peer_route_table.lock().unwrap().contains_key(&_route_prefix) {
-	    re.peer_route_table.lock().unwrap().remove(&_route_prefix);
-	    0
-	} else {
-	    -2
-	}
+    let mut peer_t = PEER_TABLE.lock().unwrap();
+    if peer_t.contains_key(&_peer_prefix) {
+        let re = &peer_t[&_peer_prefix];
+        let mut peer_rt = re.peer_route_table.lock().unwrap();
+        if peer_rt.contains_key(&_route_prefix) {
+            println!("found route {} for peer {}", _route_prefix, _peer_prefix);
+            let route_entry: Arc<Box<RouteIntEntry>>;
+            let mut global_rt = ROUTE_TABLE.lock().unwrap();
+            if global_rt.contains_key(&_route_prefix) {
+                println!("found route entry in global table");
+                let existing_entry: &Arc<Box<RouteIntEntry>> = &global_rt[&_route_prefix];
+                existing_entry.DeletePeer(_peer_prefix);
+                println!("peer is removed from route table entry peer list");
+                if existing_entry.GetNumberOfPeers() == 0 {
+                    println!("removing route from global as it was the last peer");
+                    global_rt.remove(&_route_prefix);
+                }
+            }
+            peer_rt.remove(&_route_prefix);
+            0
+        } else {
+            -2
+        }
     } else {
         -1
     }
