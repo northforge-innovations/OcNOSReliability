@@ -394,4 +394,3 @@ int c_rust_peer_route_entry_test3()
 		return -1;
 	return 0;
 }
-
