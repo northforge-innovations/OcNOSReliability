@@ -10,7 +10,7 @@ static void build_ip_addr(char *ip_addr_str, int increment, unsigned int *prefix
 {
 	struct in_addr in;
 	inet_aton(ip_addr_str, &in);
-	*prefix = in.s_addr + increment;
+	*prefix = htonl(ntohl(in.s_addr) + increment);
 }
 
 static void setup_ip_addr(IpAddrC *addr, unsigned int *prefix)
@@ -48,6 +48,8 @@ int c_rust_peer_entry_test()
 	IpAddrC ip_addr;
 	unsigned int current_peer_prefix;
 	unsigned int dummy = 0;
+
+	init_logger();
 
 	for (int i = 0; i < PEER_ENTRY_TEST_PEER_NUMBER; i++) {
 		build_ip_addr(PEER_ENTRY_TEST_INITIAL_PEER,i, &current_peer_prefix);
@@ -104,6 +106,8 @@ int c_rust_peer_route_entry_test1()
 	unsigned int current_peer_prefix;
 	unsigned int current_route_prefix;
 	unsigned int dummy = 0;
+
+	init_logger();
 
 	for (int i = 0; i < PEER_ROUTE_ENTRY_TEST1_PEER_NUMBER; i++ ) {
 		build_ip_addr(PEER_ROUTE_ENTRY_TEST1_INITIAL_PEER,i, &current_peer_prefix);
@@ -164,8 +168,10 @@ int c_rust_peer_route_entry_test2()
 	PeerEntry peer_entry;
 	IpAddrC ip_addr;
 	unsigned int dummy = 0;
-
 	unsigned int current_peer_prefix;
+
+	init_logger();
+
 	build_ip_addr(PEER_ROUTE_ENTRY_TEST2_INITIAL_PEER,0, &current_peer_prefix);
 	setup_ip_addr(&ip_addr, &current_peer_prefix);
 	setup_peer_entry(&peer_entry, &current_peer_prefix, 3);
@@ -242,6 +248,8 @@ int c_rust_peer_entry_test2()
 	unsigned int current_peer_prefix;
 	unsigned int dummy = 0;
 
+	init_logger();
+
 	for (int i = 0; i < PEER_ENTRY_TEST2_PEER_NUMBER; i++) {
 		build_ip_addr(PEER_ENTRY_TEST2_INITIAL_PEER,i, &current_peer_prefix);
 		setup_ip_addr(&ip_addr, &current_peer_prefix);
@@ -298,6 +306,8 @@ int c_rust_peer_route_entry_test3()
 	PeerEntry peer_entry;
 	IpAddrC ip_addr;
 	unsigned int current_peer_prefix;
+
+	init_logger();
 
 	build_ip_addr(PEER_ROUTE_ENTRY_TEST3_INITIAL_PEER,0, &current_peer_prefix);
 	setup_ip_addr(&ip_addr, &current_peer_prefix);
