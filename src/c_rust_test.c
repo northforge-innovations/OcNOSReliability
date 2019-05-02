@@ -54,7 +54,7 @@ int c_rust_peer_entry_test()
 	for (int i = 0; i < PEER_ENTRY_TEST_PEER_NUMBER; i++) {
 		build_ip_addr(PEER_ENTRY_TEST_INITIAL_PEER,i, &current_peer_prefix);
 		setup_peer_entry(&entry, &current_peer_prefix, PEER_ENTRY_TEST_INITIAL_IFINDEX + 1);
-		rc = peer_add(&entry.prefix, &entry);
+		rc = peer_add_modify(&entry.prefix, &entry);
 		if (rc != 0)
 			return rc;
 		setup_peer_entry(&entry, &dummy, 0);
@@ -70,7 +70,7 @@ int c_rust_peer_entry_test()
 		build_ip_addr(PEER_ENTRY_TEST_INITIAL_PEER,i, &current_peer_prefix);
 		setup_ip_addr(&ip_addr, &current_peer_prefix);
 		setup_peer_entry(&entry, &current_peer_prefix, PEER_ENTRY_TEST_INITIAL_IFINDEX + 1);
-		rc = peer_add(&ip_addr, &entry);
+		rc = peer_add_modify(&ip_addr, &entry);
 		if (rc != 0)
 			return rc;
 		setup_peer_entry(&entry, &dummy, 0);
@@ -113,7 +113,7 @@ int c_rust_peer_route_entry_test1()
 		build_ip_addr(PEER_ROUTE_ENTRY_TEST1_INITIAL_PEER,i, &current_peer_prefix);
 		setup_ip_addr(&ip_addr, &current_peer_prefix);
 		setup_peer_entry(&peer_entry, &current_peer_prefix, PEER_ROUTE_ENTRY_TEST1_INITIAL_IFINDEX + i);
-		rc = peer_add(&ip_addr, &peer_entry);
+		rc = peer_add_modify(&ip_addr, &peer_entry);
 		if (rc != 0)
 			return rc;
 		setup_peer_entry(&peer_entry, &dummy, 0);
@@ -126,7 +126,7 @@ int c_rust_peer_route_entry_test1()
 			unsigned int next_hop = 10;
 			build_ip_addr(PEER_ROUTE_ENTRY_TEST1_INITIAL_ROUTE,j, &current_route_prefix);
 			setup_route_entry(&route_entry, &current_route_prefix, &mask, &next_hop, PEER_ROUTE_ENTRY_TEST1_INITIAL_IFINDEX + i);
-			rc = peer_route_add(&peer_entry.prefix,&route_entry);
+			rc = peer_route_add_modify(&peer_entry.prefix,&route_entry);
 			if (rc != 0)
 				return rc;
 			next_hop = 0;
@@ -175,7 +175,7 @@ int c_rust_peer_route_entry_test2()
 	build_ip_addr(PEER_ROUTE_ENTRY_TEST2_INITIAL_PEER,0, &current_peer_prefix);
 	setup_ip_addr(&ip_addr, &current_peer_prefix);
 	setup_peer_entry(&peer_entry, &current_peer_prefix, 3);
-	rc = peer_add(&ip_addr, &peer_entry);
+	rc = peer_add_modify(&ip_addr, &peer_entry);
 	if (rc != 0)
 		return rc;
 	setup_peer_entry(&peer_entry, &dummy, 0);
@@ -190,7 +190,7 @@ int c_rust_peer_route_entry_test2()
 	build_ip_addr(PEER_ROUTE_ENTRY_TEST2_INITIAL_ROUTE,0, &current_route_prefix);
 	setup_route_entry(&route_entry, &current_route_prefix, &mask, &next_hop, PEER_ROUTE_ENTRY_TEST2_INITIAL_IFINDEX);
 	
-	rc = peer_route_add(&ip_addr,&route_entry);
+	rc = peer_route_add_modify(&ip_addr,&route_entry);
 	if (rc != 0)
 		return rc;
 	rc = peer_route_lookup(&ip_addr,&route_entry.prefix, &route_entry);
@@ -200,10 +200,10 @@ int c_rust_peer_route_entry_test2()
 	build_ip_addr(PEER_ROUTE_ENTRY_TEST2_INITIAL_PEER,1, &current_peer_prefix);
 	setup_ip_addr(&ip_addr, &current_peer_prefix);
 	setup_peer_entry(&peer_entry, &current_peer_prefix, PEER_ROUTE_ENTRY_TEST2_INITIAL_IFINDEX);
-	rc = peer_add(&ip_addr, &peer_entry);
+	rc = peer_add_modify(&ip_addr, &peer_entry);
 	if (rc != 0)
 		return rc;
-	rc = peer_route_add(&ip_addr,&route_entry);
+	rc = peer_route_add_modify(&ip_addr,&route_entry);
 	if (rc != 0)
 		return rc;
 	build_ip_addr(PEER_ROUTE_ENTRY_TEST2_INITIAL_PEER,1, &current_peer_prefix);
@@ -246,7 +246,6 @@ int c_rust_peer_entry_test2()
 	PeerEntry peer_entry;
 	IpAddrC ip_addr;
 	unsigned int current_peer_prefix;
-	unsigned int dummy = 0;
 
 	init_logger();
 
@@ -313,7 +312,7 @@ int c_rust_peer_route_entry_test3()
 	setup_ip_addr(&ip_addr, &current_peer_prefix);
 	setup_peer_entry(&peer_entry, &current_peer_prefix, 3);
 	printf("adding first peer\n");
-	rc = peer_add(&ip_addr, &peer_entry);
+	rc = peer_add_modify(&ip_addr, &peer_entry);
 	if (rc != 0)
 		return rc;
 	printf("done. lookup...\n");
@@ -339,7 +338,7 @@ int c_rust_peer_route_entry_test3()
 	// adding one more peer
 	build_ip_addr(PEER_ROUTE_ENTRY_TEST3_INITIAL_PEER,1, &current_peer_prefix);
 	printf("adding second peer\n");
-	rc = peer_add(&ip_addr, &peer_entry);
+	rc = peer_add_modify(&ip_addr, &peer_entry);
 	if (rc != 0)
 		return rc;
 	printf("adding route to second peer\n");
