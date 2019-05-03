@@ -9,6 +9,7 @@ build = "build.rs"
 lazy_static = "*"
 parking_lot = "*"
 log = "*"
+patricia_tree = "*"
 
 [build-dependencies]
 cc = "1.0"

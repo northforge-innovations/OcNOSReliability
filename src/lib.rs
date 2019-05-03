@@ -3,10 +3,19 @@ extern crate lazy_static;
 extern crate parking_lot;
 use parking_lot::ReentrantMutex;
 use std::cell::RefCell;
+use std::collections::hash_map::Iter;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::ptr;
 use std::sync::Arc;
 extern crate log;
+extern crate patricia_tree;
+use patricia_tree::*;
+
+//#[link(name = "c_callbacks")]
+extern "C" {
+    fn on_peer(ip_addr: &IpAddrC) -> i32;
+}
 
 #[repr(C)]
 pub struct IpAddrC {
@@ -28,11 +37,132 @@ pub struct PeerEntry {
     out_ifindex: u32,
 }
 
+#[repr(C)]
+pub struct ForwardingEntry {
+    next_hop: IpAddrC,
+    out_ifindex: u32,
+}
+
 lazy_static! {
     pub static ref ROUTE_TABLE_V4: Arc<ReentrantMutex<RefCell<HashMap<IpAddr, Arc<ReentrantMutex<RefCell<Box<RouteIntEntry>>>>>>>> =
         Arc::new(ReentrantMutex::new(RefCell::new(HashMap::new())));
     pub static ref ROUTE_TABLE_V6: Arc<ReentrantMutex<RefCell<HashMap<IpAddr, Arc<ReentrantMutex<RefCell<Box<RouteIntEntry>>>>>>>> =
         Arc::new(ReentrantMutex::new(RefCell::new(HashMap::new())));
+    pub static ref PREFIX_TREE4: Arc<ReentrantMutex<RefCell<PatriciaMap<Arc<ReentrantMutex<RefCell<Box<ForwardingEntryInt>>>>>>>> =
+        Arc::new(ReentrantMutex::new(RefCell::new(PatriciaMap::new())));
+    pub static ref PREFIX_TREE6: Arc<ReentrantMutex<RefCell<PatriciaMap<Arc<ReentrantMutex<RefCell<Box<ForwardingEntryInt>>>>>>>> =
+        Arc::new(ReentrantMutex::new(RefCell::new(PatriciaMap::new())));
+}
+
+pub enum PrefixTree {
+    V4(&'static PREFIX_TREE4),
+    V6(&'static PREFIX_TREE6),
+}
+
+pub struct ForwardingEntryInt {
+    next_hop: IpAddr,
+    out_ifindex: u32,
+}
+
+impl PrefixTree {
+    fn insert(
+        &self,
+        key: IpAddr,
+        fwd_entry: Arc<ReentrantMutex<RefCell<Box<ForwardingEntryInt>>>>,
+    ) -> i32 {
+        match self {
+            PrefixTree::V4(_) => match key {
+                IpAddr::V4(ipv4) => {
+                    PREFIX_TREE4
+                        .lock()
+                        .borrow_mut()
+                        .insert(ipv4.octets(), fwd_entry);
+                    0
+                }
+                IpAddr::V6(_) => {
+                    trace!("wrong argument type, expected ipv4");
+                    -1
+                }
+            },
+
+            PrefixTree::V6(_) => match key {
+                IpAddr::V6(ipv6) => {
+                    PREFIX_TREE6
+                        .lock()
+                        .borrow_mut()
+                        .insert(ipv6.octets(), fwd_entry);
+                    0
+                }
+                IpAddr::V4(_) => {
+                    trace!("wrong argument type, expected ipv6");
+                    -1
+                }
+            },
+        }
+    }
+
+    fn get_longest_common_prefix(
+        &self,
+        key: IpAddr,
+    ) -> Option<Arc<ReentrantMutex<RefCell<Box<ForwardingEntryInt>>>>> {
+        match self {
+            PrefixTree::V4(_) => match key {
+                IpAddr::V4(ipv4) => match PREFIX_TREE4
+                    .lock()
+                    .borrow()
+                    .get_longest_common_prefix(&ipv4.octets())
+                {
+                    Some((k, v)) => Some(Arc::clone(v)),
+                    None => None,
+                },
+                IpAddr::V6(_) => {
+                    trace!("wrong argument type, expected ipv4");
+                    None
+                }
+            },
+
+            PrefixTree::V6(_) => match key {
+                IpAddr::V6(ipv6) => match PREFIX_TREE6
+                    .lock()
+                    .borrow()
+                    .get_longest_common_prefix(&ipv6.octets())
+                {
+                    Some((k, v)) => Some(Arc::clone(v)),
+                    None => None,
+                },
+                IpAddr::V4(_) => {
+                    trace!("wrong argument type, expected ipv6");
+                    None
+                }
+            },
+        }
+    }
+
+    fn remove(&self, key: IpAddr) -> i32 {
+        match self {
+            PrefixTree::V4(_) => match key {
+                IpAddr::V4(ipv4) => match PREFIX_TREE4.lock().borrow_mut().remove(ipv4.octets()) {
+                    Some(rc) => 0,
+                    None => -1,
+                },
+                IpAddr::V6(_) => {
+                    trace!("wrong argument type, expected ipv4");
+                    -1
+                }
+            },
+
+            PrefixTree::V6(_) => match key {
+                IpAddr::V6(ipv6) => match PREFIX_TREE6.lock().borrow_mut().remove(ipv6.octets()) {
+                    Some(rc) => 0,
+                    None => -1,
+                },
+                IpAddr::V4(_) => {
+                    trace!("wrong argument type, expected ipv6");
+                    -1
+                }
+            },
+        }
+    }
 }
 
 pub enum RouteTable {
@@ -215,6 +345,26 @@ impl PeerTable {
         match self {
             PeerTable::V4(_) => Arc::clone(&PEER_TABLE_V4.lock().borrow()[ip_addr]),
             PeerTable::V6(_) => Arc::clone(&PEER_TABLE_V6.lock().borrow()[ip_addr]),
+        }
+    }
+    fn _iterate(&self, keys_vals: Iter<IpAddr, Arc<ReentrantMutex<RefCell<Box<PeerIntEntry>>>>>) {
+        for (key, val) in keys_vals {
+            println!("key: {} val: {}", key, val.lock().borrow().prefix);
+            unsafe {
+                let mut ip: IpAddrC = IpAddrC {
+                    family: 1,
+                    addr: ptr::null_mut(),
+                };
+                if on_peer(&ip) == 1 {
+                    break;
+                }
+            }
+        }
+    }
+    fn iterate(&mut self) {
+        match self {
+            PeerTable::V4(_) => self._iterate(PEER_TABLE_V4.lock().borrow().iter()),
+            PeerTable::V6(_) => self._iterate(PEER_TABLE_V6.lock().borrow().iter()),
         }
     }
 }
@@ -788,14 +938,6 @@ fn _peer_route_delete(
         );
         return -2;
     }
-    /*if route_table.contains_key(&route_prefix) {
-        let re: &mut Box<RouteIntEntry>;
-        unsafe {
-            re = &mut *route_table.get_mut(&route_prefix);
-        }
-        trace!("found route entry in global table");
-        re.delete_peer(*peer_ip_addr, route_table);
-    }*/
     peer_table.remove(&route_prefix);
     0
 }
@@ -826,6 +968,120 @@ pub extern "C" fn peer_route_delete(_peer_prefix: &IpAddrC, _route_prefix: &IpAd
             )
         }
     }
+}
+
+fn _peer_iterate(peer_table: &mut PeerTable, route_table: &RouteTable) {
+    peer_table.iterate();
+}
+
+#[no_mangle]
+pub extern "C" fn peer_iterate(address_family: u32) {
+    if address_family == 1 {
+        _peer_iterate(
+            &mut PeerTable::V4(&PEER_TABLE_V4),
+            &RouteTable::V4(&ROUTE_TABLE_V4),
+        );
+    } else {
+        _peer_iterate(
+            &mut PeerTable::V6(&PEER_TABLE_V6),
+            &RouteTable::V6(&ROUTE_TABLE_V6),
+        );
+    }
+}
+
+fn _longest_match_lookup(
+    ip_addr: &IpAddr,
+    prefix_tree: &PrefixTree,
+    _entry: *mut ForwardingEntry,
+) -> i32 {
+    unsafe {
+        match prefix_tree.get_longest_common_prefix(*ip_addr) {
+            Some(fe) => {
+                trace!(
+                    "longest_match_lookup prefix {}, found next_hop {} out_ifindex {}",
+                    ip_addr,
+                    fe.lock().borrow().next_hop,
+                    fe.lock().borrow().out_ifindex
+                );
+                let mut addr_ptr: *mut u8 = (*_entry).next_hop.addr;
+                copy_ip_addr_to_user(addr_ptr, &fe.lock().borrow().next_hop);
+                (*_entry).out_ifindex = fe.lock().borrow().out_ifindex;
+                0
+            }
+            None => -1,
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn longest_match_lookup(_prefix: &IpAddrC, _entry: *mut ForwardingEntry) -> i32 {
+    let ip_addr;
+
+    unsafe {
+        if _prefix.family == 1 {
+            ip_addr = copy_ip_addr_v4_from_user(_prefix.addr);
+            _longest_match_lookup(&ip_addr, &PrefixTree::V4(&PREFIX_TREE4), _entry)
+        } else {
+            ip_addr = copy_ip_addr_v6_from_user(_prefix.addr as *mut u16);
+            _longest_match_lookup(&ip_addr, &PrefixTree::V6(&PREFIX_TREE6), _entry)
+        }
+    }
+}
+
+fn _longest_match_add(ip_addr: &IpAddr, prefix_tree: &PrefixTree, fe: ForwardingEntryInt) -> i32 {
+    unsafe {
+        let new_fe: Arc<ReentrantMutex<RefCell<Box<ForwardingEntryInt>>>>;
+        new_fe = Arc::new(ReentrantMutex::new(RefCell::new(Box::new(fe))));
+        prefix_tree.insert(*ip_addr, new_fe)
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn longest_match_add(_prefix: &IpAddrC, _entry: *mut ForwardingEntry) -> i32 {
+    let ip_addr;
+    let rc;
+
+    unsafe {
+        let user_fe: Box<ForwardingEntry> = Box::from_raw(_entry);
+        if _prefix.family == 1 {
+            ip_addr = copy_ip_addr_v4_from_user(_prefix.addr);
+            let fe: ForwardingEntryInt = ForwardingEntryInt {
+                next_hop: copy_ip_addr_v4_from_user(user_fe.next_hop.addr),
+                out_ifindex: user_fe.out_ifindex,
+            };
+            rc = _longest_match_add(&ip_addr, &PrefixTree::V4(&PREFIX_TREE4), fe);
+        } else {
+            ip_addr = copy_ip_addr_v6_from_user(_prefix.addr as *mut u16);
+            let fe: ForwardingEntryInt = ForwardingEntryInt {
+                next_hop: copy_ip_addr_v6_from_user(user_fe.next_hop.addr as *mut u16),
+                out_ifindex: user_fe.out_ifindex,
+            };
+            rc = _longest_match_add(&ip_addr, &PrefixTree::V6(&PREFIX_TREE6), fe);
+        }
+        Box::into_raw(user_fe);
+    }
+    return rc;
+}
+
+fn _longest_match_delete(ip_addr: &IpAddr, prefix_tree: &PrefixTree) -> i32 {
+    prefix_tree.remove(*ip_addr)
+}
+
+#[no_mangle]
+pub extern "C" fn longest_match_delete(_prefix: &IpAddrC) -> i32 {
+    let ip_addr;
+    let rc;
+
+    unsafe {
+        if _prefix.family == 1 {
+            ip_addr = copy_ip_addr_v4_from_user(_prefix.addr);
+            rc = _longest_match_delete(&ip_addr, &PrefixTree::V4(&PREFIX_TREE4));
+        } else {
+            ip_addr = copy_ip_addr_v6_from_user(_prefix.addr as *mut u16);
+            rc = _longest_match_delete(&ip_addr, &PrefixTree::V6(&PREFIX_TREE6));
+        }
+    }
+    return rc;
 }
 
 use std::alloc::{GlobalAlloc, Layout};

@@ -26,6 +26,13 @@ static void setup_peer_entry(PeerEntry *peer_entry, unsigned int *prefix, unsign
 	peer_entry->out_ifindex = out_ifindex;
 }
 
+static void setup_forwarding_entry(ForwardingEntry *forwarding_entry, unsigned int *prefix, unsigned int out_ifindex)
+{
+	forwarding_entry->next_hop.family = 1;
+	forwarding_entry->next_hop.addr = (uint8_t *)prefix;
+	forwarding_entry->out_ifindex = out_ifindex;
+}
+
 static void setup_route_entry(RouteEntry *route_entry, unsigned int *prefix, unsigned int *mask, unsigned int *next_hop, unsigned int out_ifindex)
 {
 	route_entry->prefix.family = 1;
@@ -391,5 +398,107 @@ int c_rust_peer_route_entry_test3()
 	rc = route_lookup(&route_entry.prefix, &route_entry);
 	if (rc == 0)
 		return -1;
+	return 0;
+}
+int callbacks_count = 0;
+int on_peer(const IpAddrC * ip_addr)
+{
+	callbacks_count++;
+	printf("on_peer %s %d %d\n",__FILE__,__LINE__,callbacks_count);
+	return 0;
+}
+
+#define PEER_ROUTE_ENTRY_ITERATION_TEST1_INITIAL_PEER "80.0.0.1"
+#define PEER_ROUTE_ENTRY_ITERATION_TEST1_PEER_NUMBER 2
+#define PEER_ROUTE_ENTRY_ITERATION_TEST1_INITIAL_IFINDEX 3000
+#define PEER_ROUTE_ENTRY_ITERATION_TEST1_MODIFIED_IFINDEX 5000
+#define PEER_ROUTE_ENTRY_ITERATION_TEST1_INITIAL_NEXT_HOP 10
+#define PEER_ROUTE_ENTRY_ITERATION_TEST1_MODIFIED_NEXT_HOP 30
+#define PEER_ROUTE_ENTRY_ITERATION_TEST1_INITIAL_ROUTE "200.200.0.1"
+#define PEER_ROUTE_ENTRY_ITERATION_TEST1_ROUTE_NUMBER 1
+
+int c_rust_peer_route_entry_iteration_test1()
+{
+	int rc = 0;
+	PeerEntry peer_entry;
+	IpAddrC ip_addr;
+	unsigned int current_peer_prefix;
+
+	build_ip_addr(PEER_ROUTE_ENTRY_ITERATION_TEST1_INITIAL_PEER,0, &current_peer_prefix);
+	setup_ip_addr(&ip_addr, &current_peer_prefix);
+	setup_peer_entry(&peer_entry, &current_peer_prefix, 3);
+	printf("adding first peer\n");
+	rc = peer_add_modify(&ip_addr, &peer_entry);
+	if (rc != 0)
+		return rc;
+	printf("done. lookup...\n");
+	
+	rc = peer_lookup(&ip_addr,&peer_entry);
+	if (rc != 0)
+		return rc;
+	printf("done\n");
+	// adding one more peer
+	build_ip_addr(PEER_ROUTE_ENTRY_ITERATION_TEST1_INITIAL_PEER,1, &current_peer_prefix);
+	printf("adding second peer\n");
+	rc = peer_add_modify(&ip_addr, &peer_entry);
+	if (rc != 0)
+		return rc;
+	peer_iterate(1);
+	build_ip_addr(PEER_ROUTE_ENTRY_ITERATION_TEST1_INITIAL_PEER,0, &current_peer_prefix);
+	rc = peer_delete(&ip_addr);
+	if (rc != 0)
+		return rc;
+	build_ip_addr(PEER_ROUTE_ENTRY_ITERATION_TEST1_INITIAL_PEER,1, &current_peer_prefix);
+	rc = peer_delete(&ip_addr);
+	if (rc != 0)
+		return rc;
+	return callbacks_count == 2 ? 0 : -1;
+}
+
+#define PREFIX_TREE_TEST1_INITIAL_PREFIX "180.0.0.1"
+#define PREFIX_TREE_TEST1_INITIAL_IFINDEX 3000
+#define PREFIX_TREE_TEST1_INITIAL_NEXT_HOP "1.1.1.1"
+#define PREFIX_TREE_TEST1_ROUTE_NUMBER 10
+
+int c_rust_prefix_tree_test1()
+{
+	int rc = 0;
+	ForwardingEntry forwarding_entry;
+	IpAddrC ip_addr;
+	unsigned int current_prefix;
+	unsigned int current_next_hop;
+
+	for (int i = 0; i < PREFIX_TREE_TEST1_ROUTE_NUMBER; i++) {
+		build_ip_addr(PREFIX_TREE_TEST1_INITIAL_PREFIX,i, &current_prefix);
+		setup_ip_addr(&ip_addr, &current_prefix);
+		build_ip_addr(PREFIX_TREE_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
+		setup_forwarding_entry(&forwarding_entry, &current_next_hop, PREFIX_TREE_TEST1_INITIAL_IFINDEX);
+		if (longest_match_add(&ip_addr, &forwarding_entry) != 0) {
+			printf("failed here %s %d\n",__FILE__,__LINE__);
+			return -1;
+		}
+	}
+	for (int i = 0; i < PREFIX_TREE_TEST1_ROUTE_NUMBER; i++) {
+		build_ip_addr(PREFIX_TREE_TEST1_INITIAL_PREFIX,i, &current_prefix);
+		setup_ip_addr(&ip_addr, &current_prefix);
+		build_ip_addr(PREFIX_TREE_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
+		setup_forwarding_entry(&forwarding_entry, &current_next_hop, 0);
+		if (longest_match_lookup(&ip_addr, &forwarding_entry) != 0) {
+			printf("failed here %s %d\n",__FILE__,__LINE__);
+			return -1;
+		}
+		if (forwarding_entry.out_ifindex != PREFIX_TREE_TEST1_INITIAL_IFINDEX) {
+			printf("failed here %s %d\n",__FILE__,__LINE__);
+			return -1;
+		}
+	}
+	for (int i = 0; i < PREFIX_TREE_TEST1_ROUTE_NUMBER; i++) {
+		build_ip_addr(PREFIX_TREE_TEST1_INITIAL_PREFIX,i, &current_prefix);
+		setup_ip_addr(&ip_addr, &current_prefix);
+		if (longest_match_delete(&ip_addr) != 0) {
+			printf("failed here %s %d\n",__FILE__,__LINE__);
+			return -1;
+		}
+	}
 	return 0;
 }
