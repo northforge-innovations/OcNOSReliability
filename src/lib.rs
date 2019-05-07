@@ -112,7 +112,7 @@ impl PrefixTree {
                     .borrow()
                     .get_longest_common_prefix(&ipv4.octets())
                 {
-                    Some((k, v)) => Some(Arc::clone(v)),
+                    Some((_k, v)) => Some(Arc::clone(v)),
                     None => None,
                 },
                 IpAddr::V6(_) => {
@@ -127,7 +127,7 @@ impl PrefixTree {
                     .borrow()
                     .get_longest_common_prefix(&ipv6.octets())
                 {
-                    Some((k, v)) => Some(Arc::clone(v)),
+                    Some((_k, v)) => Some(Arc::clone(v)),
                     None => None,
                 },
                 IpAddr::V4(_) => {
@@ -142,7 +142,7 @@ impl PrefixTree {
         match self {
             PrefixTree::V4(_) => match key {
                 IpAddr::V4(ipv4) => match PREFIX_TREE4.lock().borrow_mut().remove(ipv4.octets()) {
-                    Some(rc) => 0,
+                    Some(_rc) => 0,
                     None => -1,
                 },
                 IpAddr::V6(_) => {
@@ -153,7 +153,7 @@ impl PrefixTree {
 
             PrefixTree::V6(_) => match key {
                 IpAddr::V6(ipv6) => match PREFIX_TREE6.lock().borrow_mut().remove(ipv6.octets()) {
-                    Some(rc) => 0,
+                    Some(_rc) => 0,
                     None => -1,
                 },
                 IpAddr::V4(_) => {
@@ -178,22 +178,13 @@ impl RouteTable {
         }
     }
     #[inline]
-    fn get(&self, ip_addr: &IpAddr) -> *const Box<RouteIntEntry> {
+    fn get(&self, ip_addr: &IpAddr) -> Arc<ReentrantMutex<RefCell<Box<RouteIntEntry>>>> {
         match self {
-            RouteTable::V4(_) => &(*ROUTE_TABLE_V4.lock().borrow()[ip_addr].lock().borrow()),
-            RouteTable::V6(_) => &(*ROUTE_TABLE_V6.lock().borrow()[ip_addr].lock().borrow()),
+            RouteTable::V4(_) => Arc::clone(&ROUTE_TABLE_V4.lock().borrow()[ip_addr]),
+            RouteTable::V6(_) => Arc::clone(&ROUTE_TABLE_V6.lock().borrow()[ip_addr]),
         }
     }
-    fn get_mut(&self, ip_addr: &IpAddr) -> *mut Box<RouteIntEntry> {
-        match self {
-            RouteTable::V4(_) => {
-                &mut (*ROUTE_TABLE_V4.lock().borrow()[ip_addr].lock().borrow_mut())
-            }
-            RouteTable::V6(_) => {
-                &mut (*ROUTE_TABLE_V6.lock().borrow()[ip_addr].lock().borrow_mut())
-            }
-        }
-    }
+
     fn insert(&self, ip_addr: &IpAddr, entry: Arc<ReentrantMutex<RefCell<Box<RouteIntEntry>>>>) {
         match self {
             RouteTable::V4(_) => {
@@ -231,20 +222,19 @@ impl RouteTable {
     ) -> Option<Arc<ReentrantMutex<RefCell<Box<RouteIntEntry>>>>> {
         let route_entry: Arc<ReentrantMutex<RefCell<Box<RouteIntEntry>>>>;
         if self.contains_key(route_prefix) {
-            let re: &mut Box<RouteIntEntry>;
-            unsafe {
-                re = &mut *self.get_mut(&route_prefix);
-            }
-            re.next_hop = *next_hop_addr;
-            re.out_ifindex = out_ifindex;
-            re.mask = *route_mask;
-            re.creator = *peer_ip_addr;
-            if !re.peer_exists(*peer_ip_addr) {
+            let re: Arc<ReentrantMutex<RefCell<Box<RouteIntEntry>>>> = self.get(&route_prefix);
+            re.lock().borrow_mut().next_hop = *next_hop_addr;
+            re.lock().borrow_mut().out_ifindex = out_ifindex;
+            re.lock().borrow_mut().mask = *route_mask;
+            re.lock().borrow_mut().creator = *peer_ip_addr;
+            if !re.lock().borrow().peer_exists(*peer_ip_addr) {
                 trace!(
                     "RouteTable::add_modify: peer {} is not present in peer list, adding",
                     peer_ip_addr
                 );
-                re.add_peer(*peer_ip_addr, peer_table.clone(peer_ip_addr));
+                re.lock()
+                    .borrow_mut()
+                    .add_peer(*peer_ip_addr, peer_table.clone(peer_ip_addr));
             }
             trace!(
                 "RouteTable::add_modify: cloned route entry prefix {} for peer {}",
@@ -297,18 +287,13 @@ impl PeerTable {
             PeerTable::V6(_) => PEER_TABLE_V6.lock().borrow().contains_key(ip_addr),
         }
     }
-    fn get(&self, ip_addr: &IpAddr) -> *const Box<PeerIntEntry> {
+    fn get(&self, ip_addr: &IpAddr) -> Arc<ReentrantMutex<RefCell<Box<PeerIntEntry>>>> {
         match self {
-            PeerTable::V4(_) => &(*PEER_TABLE_V4.lock().borrow()[ip_addr].lock().borrow()),
-            PeerTable::V6(_) => &(*PEER_TABLE_V6.lock().borrow()[ip_addr].lock().borrow()),
+            PeerTable::V4(_) => Arc::clone(&PEER_TABLE_V4.lock().borrow()[ip_addr]),
+            PeerTable::V6(_) => Arc::clone(&PEER_TABLE_V6.lock().borrow()[ip_addr]),
         }
     }
-    fn get_mut(&self, ip_addr: &IpAddr) -> *mut Box<PeerIntEntry> {
-        match self {
-            PeerTable::V4(_) => &mut (*PEER_TABLE_V4.lock().borrow()[ip_addr].lock().borrow_mut()),
-            PeerTable::V6(_) => &mut (*PEER_TABLE_V6.lock().borrow()[ip_addr].lock().borrow_mut()),
-        }
-    }
+
     fn insert(&self, ip_addr: &IpAddr, entry: Arc<ReentrantMutex<RefCell<Box<PeerIntEntry>>>>) {
         match self {
             PeerTable::V4(_) => {
@@ -351,7 +336,7 @@ impl PeerTable {
         for (key, val) in keys_vals {
             println!("key: {} val: {}", key, val.lock().borrow().prefix);
             unsafe {
-                let mut ip: IpAddrC = IpAddrC {
+                let ip: IpAddrC = IpAddrC {
                     family: 1,
                     addr: ptr::null_mut(),
                 };
@@ -493,23 +478,23 @@ fn _route_lookup(ip_addr: &IpAddr, route_table: &RouteTable, _entry: *mut RouteE
         trace!("route_lookup: cannot find prefix {}", ip_addr);
         return -1;
     }
+    let re: Arc<ReentrantMutex<RefCell<Box<RouteIntEntry>>>> = route_table.get(&ip_addr);
+    trace!(
+        "route_lookup prefix {}, found prefix {} mask {} next_hop {} out_ifindex {}",
+        ip_addr,
+        re.lock().borrow().prefix,
+        re.lock().borrow().mask,
+        re.lock().borrow().next_hop,
+        re.lock().borrow().out_ifindex
+    );
     unsafe {
-        let re: &Box<RouteIntEntry> = &*route_table.get(&ip_addr);
-        trace!(
-            "route_lookup prefix {}, found prefix {} mask {} next_hop {} out_ifindex {}",
-            ip_addr,
-            re.prefix,
-            re.mask,
-            re.next_hop,
-            re.out_ifindex
-        );
         let mut addr_ptr: *mut u8 = (*_entry).prefix.addr;
-        copy_ip_addr_to_user(addr_ptr, &re.prefix);
+        copy_ip_addr_to_user(addr_ptr, &re.lock().borrow().prefix);
         addr_ptr = (*_entry).mask.addr;
-        copy_ip_addr_to_user(addr_ptr, &re.mask);
+        copy_ip_addr_to_user(addr_ptr, &re.lock().borrow().mask);
         addr_ptr = (*_entry).next_hop.addr;
-        copy_ip_addr_to_user(addr_ptr, &re.next_hop);
-        (*_entry).out_ifindex = re.out_ifindex;
+        copy_ip_addr_to_user(addr_ptr, &re.lock().borrow().next_hop);
+        (*_entry).out_ifindex = re.lock().borrow().out_ifindex;
     }
     0
 }
@@ -540,12 +525,11 @@ pub struct PeerIntEntry {
 impl Drop for PeerIntEntry {
     fn drop(&mut self) {
         trace!("PeerIntEntry::Drop {}", self.prefix);
-        let route_table: &RouteTable;
         match self.prefix {
-            IpAddr::V4(ipv4) => {
+            IpAddr::V4(_ipv4) => {
                 self.cleanup(&RouteTable::V4(&ROUTE_TABLE_V4));
             }
-            IpAddr::V6(ipv6) => {
+            IpAddr::V6(_ipv6) => {
                 self.cleanup(&RouteTable::V6(&ROUTE_TABLE_V6));
             }
         }
@@ -634,12 +618,9 @@ fn _peer_add_modify(ip_addr: &IpAddr, peer_table: &PeerTable, _entry: *mut PeerE
         entry.out_ifindex
     );
     if peer_table.contains_key(&ip_addr) {
-        let mut pe: &mut Box<PeerIntEntry>;
-        unsafe {
-            pe = &mut *peer_table.get_mut(&ip_addr);
-        }
+        let pe: Arc<ReentrantMutex<RefCell<Box<PeerIntEntry>>>> = peer_table.get(&ip_addr);
         trace!("found existing. modifying");
-        pe.out_ifindex = entry.out_ifindex;
+        pe.lock().borrow_mut().out_ifindex = entry.out_ifindex;
 
         let _m_entry = Box::into_raw(entry);
         1
@@ -675,11 +656,11 @@ fn _peer_lookup(ip_addr: &IpAddr, peer_table: &PeerTable, _entry: *mut PeerEntry
         trace!("not found");
         return -1;
     }
+    let pe = peer_table.get(&ip_addr);
     unsafe {
-        let pe = &*peer_table.get(&ip_addr);
         let addr_ptr: *mut u8 = (*_entry).prefix.addr;
-        copy_ip_addr_to_user(addr_ptr, &pe.prefix);
-        (*_entry).out_ifindex = pe.out_ifindex;
+        copy_ip_addr_to_user(addr_ptr, &pe.lock().borrow().prefix);
+        (*_entry).out_ifindex = pe.lock().borrow().out_ifindex;
     }
     0
 }
@@ -699,7 +680,7 @@ pub extern "C" fn peer_lookup(_prefix: &IpAddrC, _entry: *mut PeerEntry) -> i32 
     }
 }
 
-fn _peer_delete(ip_addr: &IpAddr, peer_table: &PeerTable, route_table: &RouteTable) -> i32 {
+fn _peer_delete(ip_addr: &IpAddr, peer_table: &PeerTable) -> i32 {
     trace!("peer_delete {}", ip_addr);
     if !peer_table.contains_key(&ip_addr) {
         trace!("not found");
@@ -715,18 +696,10 @@ pub extern "C" fn peer_delete(_prefix: &IpAddrC) -> i32 {
     unsafe {
         if _prefix.family == 1 {
             ip_addr = copy_ip_addr_v4_from_user(_prefix.addr);
-            _peer_delete(
-                &ip_addr,
-                &PeerTable::V4(&PEER_TABLE_V4),
-                &RouteTable::V4(&ROUTE_TABLE_V4),
-            )
+            _peer_delete(&ip_addr, &PeerTable::V4(&PEER_TABLE_V4))
         } else {
             ip_addr = copy_ip_addr_v6_from_user(_prefix.addr as *mut u16);
-            _peer_delete(
-                &ip_addr,
-                &PeerTable::V6(&PEER_TABLE_V6),
-                &RouteTable::V6(&ROUTE_TABLE_V6),
-            )
+            _peer_delete(&ip_addr, &PeerTable::V6(&PEER_TABLE_V6))
         }
     }
 }
@@ -749,11 +722,8 @@ fn _peer_route_add_modify(
         trace!("not found");
         return -1;
     }
-    let pe: &mut Box<PeerIntEntry>;
-    unsafe {
-        pe = &mut *peer_table.get_mut(&peer_ip_addr);
-    }
-    let rc = pe.route_add_modify(
+    let pe: Arc<ReentrantMutex<RefCell<Box<PeerIntEntry>>>> = peer_table.get(&peer_ip_addr);
+    let rc = pe.lock().borrow_mut().route_add_modify(
         route_prefix,
         route_mask,
         next_hop_addr,
@@ -823,11 +793,10 @@ fn _peer_route_lookup(
         trace!("peer not found");
         return -1;
     }
-    let pe: &Box<PeerIntEntry>;
-    unsafe {
-        pe = &mut *peer_table.get_mut(&peer_ip_addr);
-    }
+    let pe: Arc<ReentrantMutex<RefCell<Box<PeerIntEntry>>>> = peer_table.get(&peer_ip_addr);
     if !pe
+        .lock()
+        .borrow()
         .peer_route_table
         .lock()
         .borrow()
@@ -845,7 +814,7 @@ fn _peer_route_lookup(
         let mut addr_ptr: *mut u8 = (*_entry).prefix.addr;
         copy_ip_addr_to_user(
             addr_ptr,
-            &pe.peer_route_table.lock().borrow()[&route_prefix]
+            &pe.lock().borrow().peer_route_table.lock().borrow()[&route_prefix]
                 .lock()
                 .borrow()
                 .prefix,
@@ -853,7 +822,7 @@ fn _peer_route_lookup(
         addr_ptr = (*_entry).mask.addr;
         copy_ip_addr_to_user(
             addr_ptr,
-            &pe.peer_route_table.lock().borrow()[&route_prefix]
+            &pe.lock().borrow().peer_route_table.lock().borrow()[&route_prefix]
                 .lock()
                 .borrow()
                 .mask,
@@ -861,12 +830,12 @@ fn _peer_route_lookup(
         addr_ptr = (*_entry).next_hop.addr;
         copy_ip_addr_to_user(
             addr_ptr,
-            &pe.peer_route_table.lock().borrow()[&route_prefix]
+            &pe.lock().borrow().peer_route_table.lock().borrow()[&route_prefix]
                 .lock()
                 .borrow()
                 .next_hop,
         );
-        (*_entry).out_ifindex = pe.peer_route_table.lock().borrow()[&route_prefix]
+        (*_entry).out_ifindex = pe.lock().borrow().peer_route_table.lock().borrow()[&route_prefix]
             .lock()
             .borrow()
             .out_ifindex;
@@ -906,12 +875,7 @@ pub extern "C" fn peer_route_lookup(
     }
 }
 
-fn _peer_route_delete(
-    peer_ip_addr: &IpAddr,
-    route_prefix: &IpAddr,
-    peer_table: &PeerTable,
-    route_table: &RouteTable,
-) -> i32 {
+fn _peer_route_delete(peer_ip_addr: &IpAddr, route_prefix: &IpAddr, peer_table: &PeerTable) -> i32 {
     trace!(
         "peer_route_delete peer {} prefix {}",
         peer_ip_addr,
@@ -921,11 +885,11 @@ fn _peer_route_delete(
         trace!("peer not found");
         return -1;
     }
-    let pe: &Box<PeerIntEntry>;
-    unsafe {
-        pe = &*peer_table.get(&peer_ip_addr);
-    }
+    let pe: Arc<ReentrantMutex<RefCell<Box<PeerIntEntry>>>> = peer_table.get(&peer_ip_addr);
+
     if !pe
+        .lock()
+        .borrow()
         .peer_route_table
         .lock()
         .borrow()
@@ -951,21 +915,11 @@ pub extern "C" fn peer_route_delete(_peer_prefix: &IpAddrC, _route_prefix: &IpAd
         if _peer_prefix.family == 1 {
             peer_ip_addr = copy_ip_addr_v4_from_user(_peer_prefix.addr);
             route_prefix = copy_ip_addr_v4_from_user(_route_prefix.addr);
-            _peer_route_delete(
-                &peer_ip_addr,
-                &route_prefix,
-                &PeerTable::V4(&PEER_TABLE_V4),
-                &RouteTable::V4(&ROUTE_TABLE_V4),
-            )
+            _peer_route_delete(&peer_ip_addr, &route_prefix, &PeerTable::V4(&PEER_TABLE_V4))
         } else {
             peer_ip_addr = copy_ip_addr_v6_from_user(_peer_prefix.addr as *mut u16);
             route_prefix = copy_ip_addr_v6_from_user(_route_prefix.addr as *mut u16);
-            _peer_route_delete(
-                &peer_ip_addr,
-                &route_prefix,
-                &PeerTable::V6(&PEER_TABLE_V6),
-                &RouteTable::V6(&ROUTE_TABLE_V6),
-            )
+            _peer_route_delete(&peer_ip_addr, &route_prefix, &PeerTable::V6(&PEER_TABLE_V6))
         }
     }
 }
@@ -994,22 +948,22 @@ fn _longest_match_lookup(
     prefix_tree: &PrefixTree,
     _entry: *mut ForwardingEntry,
 ) -> i32 {
-    unsafe {
-        match prefix_tree.get_longest_common_prefix(*ip_addr) {
-            Some(fe) => {
-                trace!(
-                    "longest_match_lookup prefix {}, found next_hop {} out_ifindex {}",
-                    ip_addr,
-                    fe.lock().borrow().next_hop,
-                    fe.lock().borrow().out_ifindex
-                );
-                let mut addr_ptr: *mut u8 = (*_entry).next_hop.addr;
+    match prefix_tree.get_longest_common_prefix(*ip_addr) {
+        Some(fe) => {
+            trace!(
+                "longest_match_lookup prefix {}, found next_hop {} out_ifindex {}",
+                ip_addr,
+                fe.lock().borrow().next_hop,
+                fe.lock().borrow().out_ifindex
+            );
+            unsafe {
+                let addr_ptr: *mut u8 = (*_entry).next_hop.addr;
                 copy_ip_addr_to_user(addr_ptr, &fe.lock().borrow().next_hop);
                 (*_entry).out_ifindex = fe.lock().borrow().out_ifindex;
-                0
             }
-            None => -1,
+            0
         }
+        None => -1,
     }
 }
 
@@ -1029,11 +983,9 @@ pub extern "C" fn longest_match_lookup(_prefix: &IpAddrC, _entry: *mut Forwardin
 }
 
 fn _longest_match_add(ip_addr: &IpAddr, prefix_tree: &PrefixTree, fe: ForwardingEntryInt) -> i32 {
-    unsafe {
-        let new_fe: Arc<ReentrantMutex<RefCell<Box<ForwardingEntryInt>>>>;
-        new_fe = Arc::new(ReentrantMutex::new(RefCell::new(Box::new(fe))));
-        prefix_tree.insert(*ip_addr, new_fe)
-    }
+    let new_fe: Arc<ReentrantMutex<RefCell<Box<ForwardingEntryInt>>>>;
+    new_fe = Arc::new(ReentrantMutex::new(RefCell::new(Box::new(fe))));
+    prefix_tree.insert(*ip_addr, new_fe)
 }
 
 #[no_mangle]
