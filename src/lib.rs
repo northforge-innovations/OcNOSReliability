@@ -11,36 +11,19 @@ use std::sync::Arc;
 extern crate log;
 extern crate patricia_tree;
 use patricia_tree::*;
+mod external_types;
+use external_types::*;
+mod simple_logger;
+use log::*;
+#[macro_use]
+mod macros;
+mod mpls_sim;
+mod utils;
+use utils::*;
 
 //#[link(name = "c_callbacks")]
 extern "C" {
     fn on_peer(ip_addr: &IpAddrC) -> i32;
-}
-
-#[repr(C)]
-pub struct IpAddrC {
-    family: u8,
-    addr: *mut u8,
-}
-
-#[repr(C)]
-pub struct RouteEntry {
-    prefix: IpAddrC,
-    mask: IpAddrC,
-    next_hop: IpAddrC,
-    out_ifindex: u32,
-}
-
-#[repr(C)]
-pub struct PeerEntry {
-    prefix: IpAddrC,
-    out_ifindex: u32,
-}
-
-#[repr(C)]
-pub struct ForwardingEntry {
-    next_hop: IpAddrC,
-    out_ifindex: u32,
 }
 
 type ROUTE_INT_ENTRY = Arc<ReentrantMutex<RefCell<Box<RouteIntEntry>>>>;
@@ -53,26 +36,6 @@ type ROUTE_TABLE = Arc<ReentrantMutex<RefCell<HashMap<IpAddr, ROUTE_INT_ENTRY>>>
 type PREFIX_TREE = Arc<ReentrantMutex<RefCell<PatriciaMap<FORWARDING_INT_ENTRY>>>>;
 
 type PEER_TABLE = Arc<ReentrantMutex<RefCell<HashMap<IpAddr, PEER_INT_ENTRY>>>>;
-
-macro_rules! read_val {
-    ( $( $x:expr ),* ) => {
-        {
-            $(
-                $x.lock().borrow()
-            )*
-        }
-    };
-}
-
-macro_rules! write_val {
-    ( $( $x:expr ),* ) => {
-        {
-            $(
-                $x.lock().borrow_mut()
-            )*
-        }
-    };
-}
 
 lazy_static! {
     pub static ref ROUTE_TABLE_V4: ROUTE_TABLE =
@@ -427,43 +390,6 @@ impl RouteIntEntry {
     pub fn get_number_of_peers(&self) -> usize {
         read_val!(self.peer_table).len()
     }
-}
-
-unsafe fn copy_ip_addr_to_user(addr_ptr: *mut u8, addr: &IpAddr) {
-    match addr {
-        IpAddr::V4(ipv4) => {
-            for i in 0..4 {
-                *addr_ptr.wrapping_add(i) = ipv4.octets()[i];
-            }
-        }
-        IpAddr::V6(ipv6) => {
-            for i in 0..16 {
-                *addr_ptr.wrapping_add(i) = ipv6.octets()[i];
-            }
-        }
-    }
-}
-
-unsafe fn copy_ip_addr_v4_from_user(addr_ptr: *mut u8) -> IpAddr {
-    IpAddr::V4(Ipv4Addr::new(
-        *addr_ptr,
-        *addr_ptr.wrapping_add(1),
-        *addr_ptr.wrapping_add(2),
-        *addr_ptr.wrapping_add(3),
-    ))
-}
-
-unsafe fn copy_ip_addr_v6_from_user(addr_ptr: *mut u16) -> IpAddr {
-    IpAddr::V6(Ipv6Addr::new(
-        *addr_ptr,
-        *addr_ptr.wrapping_add(1),
-        *addr_ptr.wrapping_add(2),
-        *addr_ptr.wrapping_add(3),
-        *addr_ptr.wrapping_add(4),
-        *addr_ptr.wrapping_add(5),
-        *addr_ptr.wrapping_add(6),
-        *addr_ptr.wrapping_add(7),
-    ))
 }
 
 fn _route_lookup(ip_addr: &IpAddr, route_table: &RouteTable, _entry: *mut RouteEntry) -> i32 {
@@ -1016,28 +942,3 @@ unsafe impl GlobalAlloc for MyAllocator {
 
 #[global_allocator]
 static GLOBAL: MyAllocator = MyAllocator;
-
-use log::*;
-
-struct SimpleLogger;
-
-impl log::Log for SimpleLogger {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= Level::Trace
-    }
-
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            println!("{} - {}", record.level(), record.args());
-        }
-    }
-
-    fn flush(&self) {}
-}
-
-static LOGGER: SimpleLogger = SimpleLogger;
-
-#[no_mangle]
-pub extern "C" fn init_logger() {
-    log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Trace));
-}
