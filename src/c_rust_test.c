@@ -424,6 +424,8 @@ int c_rust_peer_route_entry_iteration_test1()
 	IpAddrC ip_addr;
 	unsigned int current_peer_prefix;
 
+	init_logger();
+
 	build_ip_addr(PEER_ROUTE_ENTRY_ITERATION_TEST1_INITIAL_PEER,0, &current_peer_prefix);
 	setup_ip_addr(&ip_addr, &current_peer_prefix);
 	setup_peer_entry(&peer_entry, &current_peer_prefix, 3);
@@ -468,6 +470,8 @@ int c_rust_prefix_tree_test1()
 	unsigned int current_prefix;
 	unsigned int current_next_hop;
 
+	init_logger();
+
 	for (int i = 0; i < PREFIX_TREE_TEST1_ROUTE_NUMBER; i++) {
 		build_ip_addr(PREFIX_TREE_TEST1_INITIAL_PREFIX,i, &current_prefix);
 		setup_ip_addr(&ip_addr, &current_prefix);
@@ -496,6 +500,77 @@ int c_rust_prefix_tree_test1()
 		build_ip_addr(PREFIX_TREE_TEST1_INITIAL_PREFIX,i, &current_prefix);
 		setup_ip_addr(&ip_addr, &current_prefix);
 		if (longest_match_delete(&ip_addr) != 0) {
+			printf("failed here %s %d\n",__FILE__,__LINE__);
+			return -1;
+		}
+	}
+	return 0;
+}
+
+#define FTN_TEST1_ENTRIES_NUMBER 1
+#define FTN_TEST1_INITIAL_PREFIX "1.1.1.1"
+#define FTN_TEST1_INITIAL_NEXT_HOP "2.2.2.2"
+#define FTN_TEST1_INITIAL_IFINDEX 1
+#define FTN_TEST1_INITIAL_FTN_IX 1
+
+void setup_ftn_entry_add(FtnAddData *ftn_add_data, unsigned int *current_label, unsigned int ifindex, unsigned int ftn_ix)
+{
+	ftn_add_data->out_ifindex = ifindex;
+	ftn_add_data->out_label_number = 1;
+	ftn_add_data->out_label = current_label;
+	ftn_add_data->ftn_ix = ftn_ix;
+}
+
+void setup_ftn_entry_del(FtnDelData *ftn_del_data, unsigned int ftn_ix)
+{
+	ftn_del_data->ftn_ix = ftn_ix;
+}
+
+int c_rust_ftn_test1()
+{
+	int rc = 0;
+	FtnAddData ftn_add_data;
+	FtnDelData ftn_del_data;
+	unsigned int current_prefix;
+	unsigned int current_next_hop;
+	unsigned int current_label;
+
+	init_logger();
+
+	for (int i = 0; i < FTN_TEST1_ENTRIES_NUMBER; i++) {
+		build_ip_addr(FTN_TEST1_INITIAL_PREFIX,i, &current_prefix);
+		setup_ip_addr(&ftn_add_data.fec, &current_prefix);
+		build_ip_addr(FTN_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
+		setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
+		setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST1_INITIAL_IFINDEX, FTN_TEST1_INITIAL_FTN_IX + i);
+		if (ftn_add(&ftn_add_data) != 0) {
+			printf("failed here %s %d\n",__FILE__,__LINE__);
+			return -1;
+		}
+	}
+	for (int i = 0; i < FTN_TEST1_ENTRIES_NUMBER; i++) {
+		build_ip_addr(FTN_TEST1_INITIAL_PREFIX,i, &current_prefix);
+		setup_ip_addr(&ftn_del_data.fec, &current_prefix);
+		setup_ftn_entry_del(&ftn_del_data, FTN_TEST1_INITIAL_FTN_IX + i);
+		if (ftn_del(&ftn_del_data) != 0) {
+			printf("failed here %s %d\n",__FILE__,__LINE__);
+			return -1;
+		}
+	}
+	for (int i = 0; i < FTN_TEST1_ENTRIES_NUMBER; i++) {
+		build_ip_addr(FTN_TEST1_INITIAL_PREFIX,i, &current_prefix);
+		setup_ip_addr(&ftn_add_data.fec, &current_prefix);
+		build_ip_addr(FTN_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
+		setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
+		setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST1_INITIAL_IFINDEX, FTN_TEST1_INITIAL_FTN_IX + i);
+		if (ftn_add(&ftn_add_data) != 0) {
+			printf("failed here %s %d\n",__FILE__,__LINE__);
+			return -1;
+		}
+		build_ip_addr(FTN_TEST1_INITIAL_PREFIX,i, &current_prefix);
+		setup_ip_addr(&ftn_del_data.fec, &current_prefix);
+		setup_ftn_entry_del(&ftn_del_data, FTN_TEST1_INITIAL_FTN_IX + i);
+		if (ftn_del(&ftn_del_data) != 0) {
 			printf("failed here %s %d\n",__FILE__,__LINE__);
 			return -1;
 		}

@@ -44,7 +44,7 @@ pub struct IlmDelData {
 #[repr(C)]
 pub struct FtnAddData {
     pub fec: IpAddrC,
-    pub ftn_idx: u32,
+    pub ftn_ix: u32,
     pub next_hop: IpAddrC,
     pub out_ifindex: u32,
     pub out_label_number: u32,
@@ -54,5 +54,5 @@ pub struct FtnAddData {
 #[repr(C)]
 pub struct FtnDelData {
     pub fec: IpAddrC,
-    pub ftn_idx: u32,
+    pub ftn_ix: u32,
 }
