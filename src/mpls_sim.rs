@@ -32,6 +32,7 @@ type IlmTable = Arc<ReentrantMutex<RefCell<HashMap<IlmKey, IlmList>>>>;
 type XcTable = Arc<ReentrantMutex<RefCell<HashMap<XcKey, XcEntryWrapped>>>>;
 type NhlfeEntryWrapped = Arc<ReentrantMutex<RefCell<Box<NhlfeEntry>>>>;
 type NhlfeTable = Arc<ReentrantMutex<RefCell<HashMap<NhlfeKey, NhlfeEntryWrapped>>>>;
+type IdTable = Arc<ReentrantMutex<RefCell<Box<IdMap>>>>;
 
 lazy_static! {
     pub static ref FTN_TABLE4: FtnTable =
@@ -45,6 +46,38 @@ lazy_static! {
         Arc::new(ReentrantMutex::new(RefCell::new(HashMap::new())));
     pub static ref NHLFE_TABLE6: NhlfeTable =
         Arc::new(ReentrantMutex::new(RefCell::new(HashMap::new())));
+    pub static ref XC_ID_TABLE: IdTable =
+        Arc::new(ReentrantMutex::new(RefCell::new(Box::new(IdMap {
+            ids: [false; 1024]
+        }))));
+    pub static ref NHLFE_ID_TABLE: IdTable =
+        Arc::new(ReentrantMutex::new(RefCell::new(Box::new(IdMap {
+            ids: [false; 1024]
+        }))));
+}
+
+pub struct IdMap {
+    ids: [bool; 1024],
+}
+
+impl IdMap {
+    fn get_free(&mut self) -> i32 {
+        let mut i = 0;
+        while (i < 1024) {
+            if !self.ids[i] {
+                self.ids[i] = true;
+                return i as i32;
+            }
+        }
+        -1
+    }
+    fn put_free(&mut self, idx: usize) {
+        if idx >= 1024 {
+            trace!("idx is too large {}", idx);
+            return;
+        }
+        self.ids[idx] = false;
+    }
 }
 
 pub enum Ftn_Table {
@@ -372,6 +405,13 @@ impl NhlfeEntry {
     }
 }
 
+impl Drop for NhlfeEntry {
+    fn drop(&mut self) {
+        trace!("Drop for NhlfeEntry");
+        write_val!(NHLFE_ID_TABLE).put_free(self.nhlfe_ix as usize);
+    }
+}
+
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 pub struct GenLabel {
     label: u32,
@@ -423,6 +463,7 @@ impl XcEntry {
 impl Drop for XcEntry {
     fn drop(&mut self) {
         trace!("Drop for XcEntry");
+        write_val!(XC_ID_TABLE).put_free(self.xc_key.xc_ix as usize);
         self.cleanup();
     }
 }
@@ -548,11 +589,23 @@ fn _ftn_add(ftn_add_data_int: &FtnAddDataInt) -> i32 {
             }
         }
         None => {
+            let xc_ix = write_val!(XC_ID_TABLE).get_free();
+            let nhlfe_ix = write_val!(NHLFE_ID_TABLE).get_free();
+            if xc_ix == -1 {
+                trace!("cannot allocate xc ix");
+                write_val!(NHLFE_ID_TABLE).put_free(nhlfe_ix as usize);
+                return -1;
+            }
+            if nhlfe_ix == -1 {
+                trace!("cannot allocate nhlfe_ix");
+                write_val!(XC_ID_TABLE).put_free(xc_ix as usize);
+                return -1;
+            }
             xc_key = XcKey {
                 in_iface: 0,
                 gen_label: GenLabel { label: 0 },
-                xc_ix: 0,    // add later
-                nhlfe_ix: 0, //add later
+                xc_ix: xc_ix as u32,
+                nhlfe_ix: nhlfe_ix as u32,
             };
             xc_entry = create_xc_entry(xc_key);
             let nhlfe_entry: NhlfeEntryWrapped = Arc::new(ReentrantMutex::new(RefCell::new(
@@ -564,8 +617,8 @@ fn _ftn_add(ftn_add_data_int: &FtnAddDataInt) -> i32 {
                     0,
                     IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
                     IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-                    0, //xc_key, to add later
-                    0, //nhlfe_key, to add later
+                    xc_ix as u32,
+                    nhlfe_ix as u32,
                 )),
             )));
             write_val!(xc_entry).set_nhlfe(Some(Arc::clone(&nhlfe_entry)));
