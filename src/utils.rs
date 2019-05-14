@@ -1,6 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::ptr;
 
+#[allow(dead_code)]
 pub unsafe fn copy_ip_addr_to_user(addr_ptr: *mut u8, addr: &IpAddr) {
     match addr {
         IpAddr::V4(ipv4) => {

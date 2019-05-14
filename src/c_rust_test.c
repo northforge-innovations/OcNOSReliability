@@ -464,7 +464,6 @@ int c_rust_peer_route_entry_iteration_test1()
 
 int c_rust_prefix_tree_test1()
 {
-	int rc = 0;
 	ForwardingEntry forwarding_entry;
 	IpAddrC ip_addr;
 	unsigned int current_prefix;
@@ -528,7 +527,6 @@ void setup_ftn_entry_del(FtnDelData *ftn_del_data, unsigned int ftn_ix)
 
 int c_rust_ftn_test1()
 {
-	int rc = 0;
 	FtnAddData ftn_add_data;
 	FtnDelData ftn_del_data;
 	unsigned int current_prefix;

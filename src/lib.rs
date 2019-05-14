@@ -26,33 +26,33 @@ extern "C" {
     fn on_peer(ip_addr: &IpAddrC) -> i32;
 }
 
-type ROUTE_INT_ENTRY = Arc<ReentrantMutex<RefCell<Box<RouteIntEntry>>>>;
+type RouteIntEntryWrapped = Arc<ReentrantMutex<RefCell<Box<RouteIntEntry>>>>;
 
-type PEER_INT_ENTRY = Arc<ReentrantMutex<RefCell<Box<PeerIntEntry>>>>;
+type PeerIntEntryWrapped = Arc<ReentrantMutex<RefCell<Box<PeerIntEntry>>>>;
 
-type FORWARDING_INT_ENTRY = Arc<ReentrantMutex<RefCell<Box<ForwardingEntryInt>>>>;
+type ForwardingIntEntryWrapped = Arc<ReentrantMutex<RefCell<Box<ForwardingEntryInt>>>>;
 
-type ROUTE_TABLE = Arc<ReentrantMutex<RefCell<HashMap<IpAddr, ROUTE_INT_ENTRY>>>>;
-type PREFIX_TREE = Arc<ReentrantMutex<RefCell<PatriciaMap<FORWARDING_INT_ENTRY>>>>;
+type RouteTable = Arc<ReentrantMutex<RefCell<HashMap<IpAddr, RouteIntEntryWrapped>>>>;
+type PrefixTree = Arc<ReentrantMutex<RefCell<PatriciaMap<ForwardingIntEntryWrapped>>>>;
 
-type PEER_TABLE = Arc<ReentrantMutex<RefCell<HashMap<IpAddr, PEER_INT_ENTRY>>>>;
+type PeerTable = Arc<ReentrantMutex<RefCell<HashMap<IpAddr, PeerIntEntryWrapped>>>>;
 
 lazy_static! {
-    pub static ref ROUTE_TABLE_V4: ROUTE_TABLE =
+    pub static ref ROUTE_TABLE_V4: RouteTable =
         Arc::new(ReentrantMutex::new(RefCell::new(HashMap::new())));
-    pub static ref ROUTE_TABLE_V6: ROUTE_TABLE =
+    pub static ref ROUTE_TABLE_V6: RouteTable =
         Arc::new(ReentrantMutex::new(RefCell::new(HashMap::new())));
-    pub static ref PEER_TABLE_V4: PEER_TABLE =
+    pub static ref PEER_TABLE_V4: PeerTable =
         Arc::new(ReentrantMutex::new(RefCell::new(HashMap::new())));
-    pub static ref PEER_TABLE_V6: PEER_TABLE =
+    pub static ref PEER_TABLE_V6: PeerTable =
         Arc::new(ReentrantMutex::new(RefCell::new(HashMap::new())));
-    pub static ref PREFIX_TREE4: PREFIX_TREE =
+    pub static ref PREFIX_TREE4: PrefixTree =
         Arc::new(ReentrantMutex::new(RefCell::new(PatriciaMap::new())));
-    pub static ref PREFIX_TREE6: PREFIX_TREE =
+    pub static ref PREFIX_TREE6: PrefixTree =
         Arc::new(ReentrantMutex::new(RefCell::new(PatriciaMap::new())));
 }
 
-pub enum PrefixTree {
+pub enum PrefixTreeGen {
     V4(&'static PREFIX_TREE4),
     V6(&'static PREFIX_TREE6),
 }
@@ -62,10 +62,10 @@ pub struct ForwardingEntryInt {
     out_ifindex: u32,
 }
 
-impl PrefixTree {
-    fn insert(&self, key: IpAddr, fwd_entry: FORWARDING_INT_ENTRY) -> i32 {
+impl PrefixTreeGen {
+    fn insert(&self, key: IpAddr, fwd_entry: ForwardingIntEntryWrapped) -> i32 {
         match self {
-            PrefixTree::V4(_) => match key {
+            PrefixTreeGen::V4(_) => match key {
                 IpAddr::V4(ipv4) => {
                     write_val!(PREFIX_TREE4).insert(ipv4.octets(), fwd_entry);
                     0
@@ -76,7 +76,7 @@ impl PrefixTree {
                 }
             },
 
-            PrefixTree::V6(_) => match key {
+            PrefixTreeGen::V6(_) => match key {
                 IpAddr::V6(ipv6) => {
                     write_val!(PREFIX_TREE6).insert(ipv6.octets(), fwd_entry);
                     0
@@ -89,9 +89,9 @@ impl PrefixTree {
         }
     }
 
-    fn get_longest_common_prefix(&self, key: IpAddr) -> Option<FORWARDING_INT_ENTRY> {
+    fn get_longest_common_prefix(&self, key: IpAddr) -> Option<ForwardingIntEntryWrapped> {
         match self {
-            PrefixTree::V4(_) => match key {
+            PrefixTreeGen::V4(_) => match key {
                 IpAddr::V4(ipv4) => {
                     match read_val!(PREFIX_TREE4).get_longest_common_prefix(&ipv4.octets()) {
                         Some((_k, v)) => Some(Arc::clone(v)),
@@ -104,7 +104,7 @@ impl PrefixTree {
                 }
             },
 
-            PrefixTree::V6(_) => match key {
+            PrefixTreeGen::V6(_) => match key {
                 IpAddr::V6(ipv6) => {
                     match read_val!(PREFIX_TREE6).get_longest_common_prefix(&ipv6.octets()) {
                         Some((_k, v)) => Some(Arc::clone(v)),
@@ -121,7 +121,7 @@ impl PrefixTree {
 
     fn remove(&self, key: IpAddr) -> i32 {
         match self {
-            PrefixTree::V4(_) => match key {
+            PrefixTreeGen::V4(_) => match key {
                 IpAddr::V4(ipv4) => match write_val!(PREFIX_TREE4).remove(ipv4.octets()) {
                     Some(_rc) => 0,
                     None => -1,
@@ -132,7 +132,7 @@ impl PrefixTree {
                 }
             },
 
-            PrefixTree::V6(_) => match key {
+            PrefixTreeGen::V6(_) => match key {
                 IpAddr::V6(ipv6) => match write_val!(PREFIX_TREE6).remove(ipv6.octets()) {
                     Some(_rc) => 0,
                     None => -1,
@@ -146,50 +146,50 @@ impl PrefixTree {
     }
 }
 
-pub enum RouteTable {
+pub enum RouteTableGen {
     V4(&'static ROUTE_TABLE_V4),
     V6(&'static ROUTE_TABLE_V6),
 }
 
-impl RouteTable {
+impl RouteTableGen {
     fn contains_key(&self, ip_addr: &IpAddr) -> bool {
         match self {
-            RouteTable::V4(_) => read_val!(ROUTE_TABLE_V4).contains_key(ip_addr),
-            RouteTable::V6(_) => read_val!(ROUTE_TABLE_V6).contains_key(ip_addr),
+            RouteTableGen::V4(_) => read_val!(ROUTE_TABLE_V4).contains_key(ip_addr),
+            RouteTableGen::V6(_) => read_val!(ROUTE_TABLE_V6).contains_key(ip_addr),
         }
     }
     #[inline]
-    fn get(&self, ip_addr: &IpAddr) -> ROUTE_INT_ENTRY {
+    fn get(&self, ip_addr: &IpAddr) -> RouteIntEntryWrapped {
         match self {
-            RouteTable::V4(_) => Arc::clone(&read_val!(ROUTE_TABLE_V4)[ip_addr]),
-            RouteTable::V6(_) => Arc::clone(&read_val!(ROUTE_TABLE_V6)[ip_addr]),
+            RouteTableGen::V4(_) => Arc::clone(&read_val!(ROUTE_TABLE_V4)[ip_addr]),
+            RouteTableGen::V6(_) => Arc::clone(&read_val!(ROUTE_TABLE_V6)[ip_addr]),
         }
     }
 
-    fn insert(&self, ip_addr: &IpAddr, entry: ROUTE_INT_ENTRY) {
+    fn insert(&self, ip_addr: &IpAddr, entry: RouteIntEntryWrapped) {
         match self {
-            RouteTable::V4(_) => {
+            RouteTableGen::V4(_) => {
                 write_val!(ROUTE_TABLE_V4).insert(*ip_addr, entry);
             }
-            RouteTable::V6(_) => {
+            RouteTableGen::V6(_) => {
                 write_val!(ROUTE_TABLE_V6).insert(*ip_addr, entry);
             }
         }
     }
     fn remove(&self, ip_addr: &IpAddr) {
         match self {
-            RouteTable::V4(_) => {
+            RouteTableGen::V4(_) => {
                 write_val!(ROUTE_TABLE_V4).remove(ip_addr);
             }
-            RouteTable::V6(_) => {
+            RouteTableGen::V6(_) => {
                 write_val!(ROUTE_TABLE_V6).remove(ip_addr);
             }
         }
     }
-    fn clone(&self, ip_addr: &IpAddr) -> ROUTE_INT_ENTRY {
+    fn clone(&self, ip_addr: &IpAddr) -> RouteIntEntryWrapped {
         match self {
-            RouteTable::V4(_) => Arc::clone(&read_val!(ROUTE_TABLE_V4)[ip_addr]),
-            RouteTable::V6(_) => Arc::clone(&read_val!(ROUTE_TABLE_V6)[ip_addr]),
+            RouteTableGen::V4(_) => Arc::clone(&read_val!(ROUTE_TABLE_V4)[ip_addr]),
+            RouteTableGen::V6(_) => Arc::clone(&read_val!(ROUTE_TABLE_V6)[ip_addr]),
         }
     }
     fn add_modify(
@@ -199,24 +199,24 @@ impl RouteTable {
         next_hop_addr: &IpAddr,
         out_ifindex: u32,
         peer_ip_addr: &IpAddr,
-        peer_table: &PeerTable,
-    ) -> Option<ROUTE_INT_ENTRY> {
-        let route_entry: ROUTE_INT_ENTRY;
+        peer_table: &PeerTableGen,
+    ) -> Option<RouteIntEntryWrapped> {
+        let route_entry: RouteIntEntryWrapped;
         if self.contains_key(route_prefix) {
-            let re: ROUTE_INT_ENTRY = self.get(&route_prefix);
+            let re: RouteIntEntryWrapped = self.get(&route_prefix);
             write_val!(re).next_hop = *next_hop_addr;
             write_val!(re).out_ifindex = out_ifindex;
             write_val!(re).mask = *route_mask;
             write_val!(re).creator = *peer_ip_addr;
             if !read_val!(re).peer_exists(*peer_ip_addr) {
                 trace!(
-                    "RouteTable::add_modify: peer {} is not present in peer list, adding",
+                    "RouteTableGen::add_modify: peer {} is not present in peer list, adding",
                     peer_ip_addr
                 );
                 write_val!(re).add_peer(*peer_ip_addr, peer_table.clone(peer_ip_addr));
             }
             trace!(
-                "RouteTable::add_modify: cloned route entry prefix {} for peer {}",
+                "RouteTableGen::add_modify: cloned route entry prefix {} for peer {}",
                 route_prefix,
                 peer_ip_addr
             );
@@ -235,7 +235,7 @@ impl RouteTable {
             self.insert(&route_prefix, new_entry);
             write_val!(route_entry).add_peer(*peer_ip_addr, peer_table.clone(peer_ip_addr));
             trace!(
-                "RouteTable::add_modify: new route entry prefix {} for peer {}",
+                "RouteTableGen::add_modify: new route entry prefix {} for peer {}",
                 route_prefix,
                 peer_ip_addr
             );
@@ -244,60 +244,60 @@ impl RouteTable {
     }
 }
 
-pub enum PeerTable {
+pub enum PeerTableGen {
     V4(&'static PEER_TABLE_V4),
     V6(&'static PEER_TABLE_V6),
 }
 
-impl PeerTable {
+impl PeerTableGen {
     fn contains_key(&self, ip_addr: &IpAddr) -> bool {
         match self {
-            PeerTable::V4(_) => read_val!(PEER_TABLE_V4).contains_key(ip_addr),
-            PeerTable::V6(_) => read_val!(PEER_TABLE_V6).contains_key(ip_addr),
+            PeerTableGen::V4(_) => read_val!(PEER_TABLE_V4).contains_key(ip_addr),
+            PeerTableGen::V6(_) => read_val!(PEER_TABLE_V6).contains_key(ip_addr),
         }
     }
-    fn get(&self, ip_addr: &IpAddr) -> PEER_INT_ENTRY {
+    fn get(&self, ip_addr: &IpAddr) -> PeerIntEntryWrapped {
         match self {
-            PeerTable::V4(_) => Arc::clone(&read_val!(PEER_TABLE_V4)[ip_addr]),
-            PeerTable::V6(_) => Arc::clone(&read_val!(PEER_TABLE_V6)[ip_addr]),
+            PeerTableGen::V4(_) => Arc::clone(&read_val!(PEER_TABLE_V4)[ip_addr]),
+            PeerTableGen::V6(_) => Arc::clone(&read_val!(PEER_TABLE_V6)[ip_addr]),
         }
     }
 
-    fn insert(&self, ip_addr: &IpAddr, entry: PEER_INT_ENTRY) {
+    fn insert(&self, ip_addr: &IpAddr, entry: PeerIntEntryWrapped) {
         match self {
-            PeerTable::V4(_) => {
+            PeerTableGen::V4(_) => {
                 write_val!(PEER_TABLE_V4).insert(*ip_addr, entry);
             }
-            PeerTable::V6(_) => {
+            PeerTableGen::V6(_) => {
                 write_val!(PEER_TABLE_V6).insert(*ip_addr, entry);
             }
         }
     }
     fn remove(&self, ip_addr: &IpAddr) {
         match self {
-            PeerTable::V4(_) => {
+            PeerTableGen::V4(_) => {
                 if self.contains_key(ip_addr) {
                     write_val!(read_val!(PEER_TABLE_V4)[ip_addr])
-                        .cleanup(&RouteTable::V4(&ROUTE_TABLE_V4));
+                        .cleanup(&RouteTableGen::V4(&ROUTE_TABLE_V4));
                 }
                 write_val!(PEER_TABLE_V4).remove(ip_addr);
             }
-            PeerTable::V6(_) => {
+            PeerTableGen::V6(_) => {
                 if self.contains_key(ip_addr) {
                     write_val!(read_val!(PEER_TABLE_V6)[ip_addr])
-                        .cleanup(&RouteTable::V6(&ROUTE_TABLE_V6));
+                        .cleanup(&RouteTableGen::V6(&ROUTE_TABLE_V6));
                 }
                 write_val!(PEER_TABLE_V6).remove(ip_addr);
             }
         }
     }
-    fn clone(&self, ip_addr: &IpAddr) -> PEER_INT_ENTRY {
+    fn clone(&self, ip_addr: &IpAddr) -> PeerIntEntryWrapped {
         match self {
-            PeerTable::V4(_) => Arc::clone(&read_val!(PEER_TABLE_V4)[ip_addr]),
-            PeerTable::V6(_) => Arc::clone(&read_val!(PEER_TABLE_V6)[ip_addr]),
+            PeerTableGen::V4(_) => Arc::clone(&read_val!(PEER_TABLE_V4)[ip_addr]),
+            PeerTableGen::V6(_) => Arc::clone(&read_val!(PEER_TABLE_V6)[ip_addr]),
         }
     }
-    fn _iterate(&self, keys_vals: Iter<IpAddr, PEER_INT_ENTRY>) {
+    fn _iterate(&self, keys_vals: Iter<IpAddr, PeerIntEntryWrapped>) {
         for (key, val) in keys_vals {
             println!("key: {} val: {}", key, read_val!(val).prefix);
             unsafe {
@@ -313,8 +313,8 @@ impl PeerTable {
     }
     fn iterate(&mut self) {
         match self {
-            PeerTable::V4(_) => self._iterate(read_val!(PEER_TABLE_V4).iter()),
-            PeerTable::V6(_) => self._iterate(read_val!(PEER_TABLE_V6).iter()),
+            PeerTableGen::V4(_) => self._iterate(read_val!(PEER_TABLE_V4).iter()),
+            PeerTableGen::V6(_) => self._iterate(read_val!(PEER_TABLE_V6).iter()),
         }
     }
 }
@@ -324,7 +324,7 @@ pub struct RouteIntEntry {
     mask: IpAddr,
     next_hop: IpAddr,
     out_ifindex: u32,
-    peer_table: PEER_TABLE,
+    peer_table: PeerTable,
     creator: IpAddr,
 }
 
@@ -358,7 +358,7 @@ impl RouteIntEntry {
             creator: _creator,
         }
     }
-    pub fn add_peer(&mut self, peer_prefix: IpAddr, peer: PEER_INT_ENTRY) -> i32 {
+    pub fn add_peer(&mut self, peer_prefix: IpAddr, peer: PeerIntEntryWrapped) -> i32 {
         if read_val!(self.peer_table).contains_key(&peer_prefix) {
             trace!("RouteIntEntry::add_peer {} already exists", peer_prefix);
             -1
@@ -368,7 +368,7 @@ impl RouteIntEntry {
             0
         }
     }
-    pub fn delete_peer(&self, peer_prefix: IpAddr, route_table: &RouteTable) -> i32 {
+    pub fn delete_peer(&self, peer_prefix: IpAddr, route_table: &RouteTableGen) -> i32 {
         trace!("RouteIntEntry::delete_peer {}", peer_prefix);
         let rc: i32;
         if read_val!(self.peer_table).contains_key(&peer_prefix) {
@@ -392,12 +392,12 @@ impl RouteIntEntry {
     }
 }
 
-fn _route_lookup(ip_addr: &IpAddr, route_table: &RouteTable, _entry: *mut RouteEntry) -> i32 {
+fn _route_lookup(ip_addr: &IpAddr, route_table: &RouteTableGen, _entry: *mut RouteEntry) -> i32 {
     if !route_table.contains_key(&ip_addr) {
         trace!("route_lookup: cannot find prefix {}", ip_addr);
         return -1;
     }
-    let re: ROUTE_INT_ENTRY = route_table.get(&ip_addr);
+    let re: RouteIntEntryWrapped = route_table.get(&ip_addr);
 
     trace!(
         "route_lookup prefix {}, found prefix {} mask {} next_hop {} out_ifindex {}",
@@ -426,10 +426,10 @@ pub extern "C" fn route_lookup(_prefix: &IpAddrC, _entry: *mut RouteEntry) -> i3
     unsafe {
         if _prefix.family == 1 {
             ip_addr = copy_ip_addr_v4_from_user(_prefix.addr);
-            _route_lookup(&ip_addr, &RouteTable::V4(&ROUTE_TABLE_V4), _entry)
+            _route_lookup(&ip_addr, &RouteTableGen::V4(&ROUTE_TABLE_V4), _entry)
         } else {
             ip_addr = copy_ip_addr_v6_from_user(_prefix.addr as *mut u16);
-            _route_lookup(&ip_addr, &RouteTable::V6(&ROUTE_TABLE_V6), _entry)
+            _route_lookup(&ip_addr, &RouteTableGen::V6(&ROUTE_TABLE_V6), _entry)
         }
     }
 }
@@ -437,7 +437,7 @@ pub extern "C" fn route_lookup(_prefix: &IpAddrC, _entry: *mut RouteEntry) -> i3
 pub struct PeerIntEntry {
     prefix: IpAddr,
     out_ifindex: u32,
-    peer_route_table: ROUTE_TABLE,
+    peer_route_table: RouteTable,
 }
 
 impl Drop for PeerIntEntry {
@@ -445,10 +445,10 @@ impl Drop for PeerIntEntry {
         trace!("PeerIntEntry::Drop {}", self.prefix);
         match self.prefix {
             IpAddr::V4(_ipv4) => {
-                self.cleanup(&RouteTable::V4(&ROUTE_TABLE_V4));
+                self.cleanup(&RouteTableGen::V4(&ROUTE_TABLE_V4));
             }
             IpAddr::V6(_ipv6) => {
-                self.cleanup(&RouteTable::V6(&ROUTE_TABLE_V6));
+                self.cleanup(&RouteTableGen::V6(&ROUTE_TABLE_V6));
             }
         }
     }
@@ -462,7 +462,7 @@ impl PeerIntEntry {
             peer_route_table: Arc::new(ReentrantMutex::new(RefCell::new(HashMap::new()))),
         }
     }
-    fn cleanup(&mut self, route_table: &RouteTable) {
+    fn cleanup(&mut self, route_table: &RouteTableGen) {
         trace!("PeerIntEntry::cleanup");
         for val in read_val!(self.peer_route_table).values() {
             write_val!(val).delete_peer(self.prefix, route_table);
@@ -475,10 +475,10 @@ impl PeerIntEntry {
         next_hop_addr: &IpAddr,
         out_ifindex: u32,
         peer_ip_addr: &IpAddr,
-        route_table: &mut RouteTable,
-        peer_table: &mut PeerTable,
+        route_table: &mut RouteTableGen,
+        peer_table: &mut PeerTableGen,
     ) -> i32 {
-        let route_entry: Option<ROUTE_INT_ENTRY>;
+        let route_entry: Option<RouteIntEntryWrapped>;
         trace!(
             "PeerIntEntry::route_add_modify prefix {} peer {}",
             route_prefix,
@@ -514,7 +514,7 @@ impl PeerIntEntry {
     }
 }
 
-fn _peer_add_modify(ip_addr: &IpAddr, peer_table: &PeerTable, _entry: *mut PeerEntry) -> i32 {
+fn _peer_add_modify(ip_addr: &IpAddr, peer_table: &PeerTableGen, _entry: *mut PeerEntry) -> i32 {
     let mut entry: Box<PeerEntry>;
 
     unsafe {
@@ -526,7 +526,7 @@ fn _peer_add_modify(ip_addr: &IpAddr, peer_table: &PeerTable, _entry: *mut PeerE
         entry.out_ifindex
     );
     if peer_table.contains_key(&ip_addr) {
-        let pe: PEER_INT_ENTRY = peer_table.get(&ip_addr);
+        let pe: PeerIntEntryWrapped = peer_table.get(&ip_addr);
         trace!("found existing. modifying");
         write_val!(pe).out_ifindex = entry.out_ifindex;
 
@@ -550,15 +550,15 @@ pub extern "C" fn peer_add_modify(_prefix: &IpAddrC, _entry: *mut PeerEntry) -> 
     unsafe {
         if _prefix.family == 1 {
             ip_addr = copy_ip_addr_v4_from_user(_prefix.addr);
-            _peer_add_modify(&ip_addr, &PeerTable::V4(&PEER_TABLE_V4), _entry)
+            _peer_add_modify(&ip_addr, &PeerTableGen::V4(&PEER_TABLE_V4), _entry)
         } else {
             ip_addr = copy_ip_addr_v6_from_user(_prefix.addr as *mut u16);
-            _peer_add_modify(&ip_addr, &PeerTable::V6(&PEER_TABLE_V6), _entry)
+            _peer_add_modify(&ip_addr, &PeerTableGen::V6(&PEER_TABLE_V6), _entry)
         }
     }
 }
 
-fn _peer_lookup(ip_addr: &IpAddr, peer_table: &PeerTable, _entry: *mut PeerEntry) -> i32 {
+fn _peer_lookup(ip_addr: &IpAddr, peer_table: &PeerTableGen, _entry: *mut PeerEntry) -> i32 {
     trace!("peer_lookup {}", ip_addr);
     if !peer_table.contains_key(&ip_addr) {
         trace!("not found");
@@ -580,15 +580,15 @@ pub extern "C" fn peer_lookup(_prefix: &IpAddrC, _entry: *mut PeerEntry) -> i32 
     unsafe {
         if _prefix.family == 1 {
             ip_addr = copy_ip_addr_v4_from_user(_prefix.addr);
-            _peer_lookup(&ip_addr, &PeerTable::V4(&PEER_TABLE_V4), _entry)
+            _peer_lookup(&ip_addr, &PeerTableGen::V4(&PEER_TABLE_V4), _entry)
         } else {
             ip_addr = copy_ip_addr_v6_from_user(_prefix.addr as *mut u16);
-            _peer_lookup(&ip_addr, &PeerTable::V6(&PEER_TABLE_V6), _entry)
+            _peer_lookup(&ip_addr, &PeerTableGen::V6(&PEER_TABLE_V6), _entry)
         }
     }
 }
 
-fn _peer_delete(ip_addr: &IpAddr, peer_table: &PeerTable) -> i32 {
+fn _peer_delete(ip_addr: &IpAddr, peer_table: &PeerTableGen) -> i32 {
     trace!("peer_delete {}", ip_addr);
     if !peer_table.contains_key(&ip_addr) {
         trace!("not found");
@@ -604,10 +604,10 @@ pub extern "C" fn peer_delete(_prefix: &IpAddrC) -> i32 {
     unsafe {
         if _prefix.family == 1 {
             ip_addr = copy_ip_addr_v4_from_user(_prefix.addr);
-            _peer_delete(&ip_addr, &PeerTable::V4(&PEER_TABLE_V4))
+            _peer_delete(&ip_addr, &PeerTableGen::V4(&PEER_TABLE_V4))
         } else {
             ip_addr = copy_ip_addr_v6_from_user(_prefix.addr as *mut u16);
-            _peer_delete(&ip_addr, &PeerTable::V6(&PEER_TABLE_V6))
+            _peer_delete(&ip_addr, &PeerTableGen::V6(&PEER_TABLE_V6))
         }
     }
 }
@@ -617,8 +617,8 @@ fn _peer_route_add_modify(
     route_prefix: &IpAddr,
     route_mask: &IpAddr,
     next_hop_addr: &IpAddr,
-    peer_table: &mut PeerTable,
-    route_table: &mut RouteTable,
+    peer_table: &mut PeerTableGen,
+    route_table: &mut RouteTableGen,
     entry: Box<RouteEntry>,
 ) -> i32 {
     trace!(
@@ -630,7 +630,7 @@ fn _peer_route_add_modify(
         trace!("not found");
         return -1;
     }
-    let pe: PEER_INT_ENTRY = peer_table.get(&peer_ip_addr);
+    let pe: PeerIntEntryWrapped = peer_table.get(&peer_ip_addr);
     let rc = write_val!(pe).route_add_modify(
         route_prefix,
         route_mask,
@@ -664,8 +664,8 @@ pub extern "C" fn peer_route_add_modify(_peer_prefix: &IpAddrC, _entry: *mut Rou
                 &route_prefix,
                 &route_mask,
                 &next_hop_addr,
-                &mut PeerTable::V4(&PEER_TABLE_V4),
-                &mut RouteTable::V4(&ROUTE_TABLE_V4),
+                &mut PeerTableGen::V4(&PEER_TABLE_V4),
+                &mut RouteTableGen::V4(&ROUTE_TABLE_V4),
                 entry,
             )
         } else {
@@ -678,8 +678,8 @@ pub extern "C" fn peer_route_add_modify(_peer_prefix: &IpAddrC, _entry: *mut Rou
                 &route_prefix,
                 &route_mask,
                 &next_hop_addr,
-                &mut PeerTable::V6(&PEER_TABLE_V6),
-                &mut RouteTable::V6(&ROUTE_TABLE_V6),
+                &mut PeerTableGen::V6(&PEER_TABLE_V6),
+                &mut RouteTableGen::V6(&ROUTE_TABLE_V6),
                 entry,
             )
         }
@@ -689,7 +689,7 @@ pub extern "C" fn peer_route_add_modify(_peer_prefix: &IpAddrC, _entry: *mut Rou
 fn _peer_route_lookup(
     peer_ip_addr: &IpAddr,
     route_prefix: &IpAddr,
-    peer_table: &PeerTable,
+    peer_table: &PeerTableGen,
     _entry: *mut RouteEntry,
 ) -> i32 {
     trace!(
@@ -701,7 +701,7 @@ fn _peer_route_lookup(
         trace!("peer not found");
         return -1;
     }
-    let pe: PEER_INT_ENTRY = peer_table.get(&peer_ip_addr);
+    let pe: PeerIntEntryWrapped = peer_table.get(&peer_ip_addr);
     if !read_val!(read_val!(pe).peer_route_table).contains_key(&route_prefix) {
         trace!("prefix not found in peer rt");
         return -2;
@@ -749,7 +749,7 @@ pub extern "C" fn peer_route_lookup(
             _peer_route_lookup(
                 &peer_ip_addr,
                 &route_prefix,
-                &PeerTable::V4(&PEER_TABLE_V4),
+                &PeerTableGen::V4(&PEER_TABLE_V4),
                 _entry,
             )
         } else {
@@ -758,14 +758,18 @@ pub extern "C" fn peer_route_lookup(
             _peer_route_lookup(
                 &peer_ip_addr,
                 &route_prefix,
-                &PeerTable::V6(&PEER_TABLE_V6),
+                &PeerTableGen::V6(&PEER_TABLE_V6),
                 _entry,
             )
         }
     }
 }
 
-fn _peer_route_delete(peer_ip_addr: &IpAddr, route_prefix: &IpAddr, peer_table: &PeerTable) -> i32 {
+fn _peer_route_delete(
+    peer_ip_addr: &IpAddr,
+    route_prefix: &IpAddr,
+    peer_table: &PeerTableGen,
+) -> i32 {
     trace!(
         "peer_route_delete peer {} prefix {}",
         peer_ip_addr,
@@ -775,7 +779,7 @@ fn _peer_route_delete(peer_ip_addr: &IpAddr, route_prefix: &IpAddr, peer_table: 
         trace!("peer not found");
         return -1;
     }
-    let pe: PEER_INT_ENTRY = peer_table.get(&peer_ip_addr);
+    let pe: PeerIntEntryWrapped = peer_table.get(&peer_ip_addr);
 
     if !read_val!(read_val!(pe).peer_route_table).contains_key(&route_prefix) {
         trace!(
@@ -798,16 +802,24 @@ pub extern "C" fn peer_route_delete(_peer_prefix: &IpAddrC, _route_prefix: &IpAd
         if _peer_prefix.family == 1 {
             peer_ip_addr = copy_ip_addr_v4_from_user(_peer_prefix.addr);
             route_prefix = copy_ip_addr_v4_from_user(_route_prefix.addr);
-            _peer_route_delete(&peer_ip_addr, &route_prefix, &PeerTable::V4(&PEER_TABLE_V4))
+            _peer_route_delete(
+                &peer_ip_addr,
+                &route_prefix,
+                &PeerTableGen::V4(&PEER_TABLE_V4),
+            )
         } else {
             peer_ip_addr = copy_ip_addr_v6_from_user(_peer_prefix.addr as *mut u16);
             route_prefix = copy_ip_addr_v6_from_user(_route_prefix.addr as *mut u16);
-            _peer_route_delete(&peer_ip_addr, &route_prefix, &PeerTable::V6(&PEER_TABLE_V6))
+            _peer_route_delete(
+                &peer_ip_addr,
+                &route_prefix,
+                &PeerTableGen::V6(&PEER_TABLE_V6),
+            )
         }
     }
 }
 
-fn _peer_iterate(peer_table: &mut PeerTable, route_table: &RouteTable) {
+fn _peer_iterate(peer_table: &mut PeerTableGen, _route_table: &RouteTableGen) {
     peer_table.iterate();
 }
 
@@ -815,20 +827,20 @@ fn _peer_iterate(peer_table: &mut PeerTable, route_table: &RouteTable) {
 pub extern "C" fn peer_iterate(address_family: u32) {
     if address_family == 1 {
         _peer_iterate(
-            &mut PeerTable::V4(&PEER_TABLE_V4),
-            &RouteTable::V4(&ROUTE_TABLE_V4),
+            &mut PeerTableGen::V4(&PEER_TABLE_V4),
+            &RouteTableGen::V4(&ROUTE_TABLE_V4),
         );
     } else {
         _peer_iterate(
-            &mut PeerTable::V6(&PEER_TABLE_V6),
-            &RouteTable::V6(&ROUTE_TABLE_V6),
+            &mut PeerTableGen::V6(&PEER_TABLE_V6),
+            &RouteTableGen::V6(&ROUTE_TABLE_V6),
         );
     }
 }
 
 fn _longest_match_lookup(
     ip_addr: &IpAddr,
-    prefix_tree: &PrefixTree,
+    prefix_tree: &PrefixTreeGen,
     _entry: *mut ForwardingEntry,
 ) -> i32 {
     match prefix_tree.get_longest_common_prefix(*ip_addr) {
@@ -857,16 +869,20 @@ pub extern "C" fn longest_match_lookup(_prefix: &IpAddrC, _entry: *mut Forwardin
     unsafe {
         if _prefix.family == 1 {
             ip_addr = copy_ip_addr_v4_from_user(_prefix.addr);
-            _longest_match_lookup(&ip_addr, &PrefixTree::V4(&PREFIX_TREE4), _entry)
+            _longest_match_lookup(&ip_addr, &PrefixTreeGen::V4(&PREFIX_TREE4), _entry)
         } else {
             ip_addr = copy_ip_addr_v6_from_user(_prefix.addr as *mut u16);
-            _longest_match_lookup(&ip_addr, &PrefixTree::V6(&PREFIX_TREE6), _entry)
+            _longest_match_lookup(&ip_addr, &PrefixTreeGen::V6(&PREFIX_TREE6), _entry)
         }
     }
 }
 
-fn _longest_match_add(ip_addr: &IpAddr, prefix_tree: &PrefixTree, fe: ForwardingEntryInt) -> i32 {
-    let new_fe: FORWARDING_INT_ENTRY;
+fn _longest_match_add(
+    ip_addr: &IpAddr,
+    prefix_tree: &PrefixTreeGen,
+    fe: ForwardingEntryInt,
+) -> i32 {
+    let new_fe: ForwardingIntEntryWrapped;
     new_fe = Arc::new(ReentrantMutex::new(RefCell::new(Box::new(fe))));
     prefix_tree.insert(*ip_addr, new_fe)
 }
@@ -884,21 +900,21 @@ pub extern "C" fn longest_match_add(_prefix: &IpAddrC, _entry: *mut ForwardingEn
                 next_hop: copy_ip_addr_v4_from_user(user_fe.next_hop.addr),
                 out_ifindex: user_fe.out_ifindex,
             };
-            rc = _longest_match_add(&ip_addr, &PrefixTree::V4(&PREFIX_TREE4), fe);
+            rc = _longest_match_add(&ip_addr, &PrefixTreeGen::V4(&PREFIX_TREE4), fe);
         } else {
             ip_addr = copy_ip_addr_v6_from_user(_prefix.addr as *mut u16);
             let fe: ForwardingEntryInt = ForwardingEntryInt {
                 next_hop: copy_ip_addr_v6_from_user(user_fe.next_hop.addr as *mut u16),
                 out_ifindex: user_fe.out_ifindex,
             };
-            rc = _longest_match_add(&ip_addr, &PrefixTree::V6(&PREFIX_TREE6), fe);
+            rc = _longest_match_add(&ip_addr, &PrefixTreeGen::V6(&PREFIX_TREE6), fe);
         }
         Box::into_raw(user_fe);
     }
     return rc;
 }
 
-fn _longest_match_delete(ip_addr: &IpAddr, prefix_tree: &PrefixTree) -> i32 {
+fn _longest_match_delete(ip_addr: &IpAddr, prefix_tree: &PrefixTreeGen) -> i32 {
     prefix_tree.remove(*ip_addr)
 }
 
@@ -910,10 +926,10 @@ pub extern "C" fn longest_match_delete(_prefix: &IpAddrC) -> i32 {
     unsafe {
         if _prefix.family == 1 {
             ip_addr = copy_ip_addr_v4_from_user(_prefix.addr);
-            rc = _longest_match_delete(&ip_addr, &PrefixTree::V4(&PREFIX_TREE4));
+            rc = _longest_match_delete(&ip_addr, &PrefixTreeGen::V4(&PREFIX_TREE4));
         } else {
             ip_addr = copy_ip_addr_v6_from_user(_prefix.addr as *mut u16);
-            rc = _longest_match_delete(&ip_addr, &PrefixTree::V6(&PREFIX_TREE6));
+            rc = _longest_match_delete(&ip_addr, &PrefixTreeGen::V6(&PREFIX_TREE6));
         }
     }
     return rc;
