@@ -51,6 +51,10 @@ lazy_static! {
         Arc::new(ReentrantMutex::new(RefCell::new(Box::new(IdMap {
             ids: [false; 1024]
         }))));
+    pub static ref ILM_ID_TABLE: IdTable =
+        Arc::new(ReentrantMutex::new(RefCell::new(Box::new(IdMap {
+            ids: [false; 1024]
+        }))));
 }
 
 pub struct IdMap {
@@ -58,22 +62,22 @@ pub struct IdMap {
 }
 
 impl IdMap {
-    fn get_free(&mut self) -> i32 {
+    fn get_free(&mut self) -> u32 {
         let i = 0;
         while i < 1024 {
             if !self.ids[i] {
                 self.ids[i] = true;
-                return i as i32;
+                return (i + 1) as u32;
             }
         }
-        -1
+        0
     }
-    fn put_free(&mut self, idx: usize) {
-        if idx >= 1024 {
-            trace!("idx is too large {}", idx);
+    fn put_free(&mut self, ix: usize) {
+        if ix > 1024 || ix == 0 {
+            trace!("idx is out of range {}", ix);
             return;
         }
-        self.ids[idx] = false;
+        self.ids[ix - 1] = false;
     }
 }
 
@@ -316,6 +320,37 @@ pub enum FtnKey {
     IP(FtnKeyIp),
 }
 
+trait MplsEntry {
+    fn get_xc_list(&mut self) -> &mut XcList;
+    fn add_xc_entry(&mut self, entry: XcEntryWrapped) {
+        trace!("add_xc_entry");
+        self.get_xc_list().push(entry);
+    }
+    fn free_xc_list(&mut self) {
+        trace!("freeing xc_list");
+        let xc_list = self.get_xc_list();
+        let len: usize = xc_list.len();
+        let mut i = 0;
+        while i < len {
+            XcTableGen::XC(&XC_TABLE).remove(&write_val!(xc_list[i]).xc_key);
+            i += 1;
+        }
+    }
+    fn iterate_xc_list(&mut self, on_xc: &Fn(&XcEntryWrapped) -> bool) -> Option<XcEntryWrapped> {
+        trace!("iterating xc_list");
+        let xc_list = self.get_xc_list();
+        let len: usize = xc_list.len();
+        let mut i = 0;
+        while i < len {
+            if !on_xc(&xc_list[i]) {
+                return Some(Arc::clone(&xc_list[i]));
+            }
+            i += 1;
+        }
+        None
+    }
+}
+
 pub struct FtnEntry {
     fec: IpAddr,
     ftn_ix: u32,
@@ -330,18 +365,11 @@ impl FtnEntry {
             xc_list: Vec::new(),
         }
     }
-    fn add_xc_entry(&mut self, entry: XcEntryWrapped) {
-        trace!("add_xc_entry");
-        self.xc_list.push(entry);
-    }
-    fn free_xc_list(&mut self) {
-        trace!("freeing xc_list");
-        let len: usize = self.xc_list.len();
-        let mut i = 0;
-        while i < len {
-            XcTableGen::XC(&XC_TABLE).remove(&write_val!(self.xc_list[i]).xc_key);
-            i += 1;
-        }
+}
+
+impl MplsEntry for FtnEntry {
+    fn get_xc_list(&mut self) -> &mut XcList {
+        &mut self.xc_list
     }
 }
 
@@ -459,7 +487,7 @@ impl Drop for XcEntry {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Copy, Clone)]
+#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
 pub struct IlmKeyPkt {
     in_iface: u32,
     in_label: u32,
@@ -473,7 +501,7 @@ impl IlmKeyPkt {
         }
     }
 }
-#[derive(PartialEq, Eq, Hash, Copy, Clone)]
+#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
 pub enum IlmKey {
     PKT(IlmKeyPkt),
 }
@@ -496,12 +524,22 @@ impl IlmEntry {
     }
 }
 
+impl MplsEntry for IlmEntry {
+    fn get_xc_list(&mut self) -> &mut XcList {
+        &mut self.xc_list
+    }
+}
+
 pub enum IlmTableGen {
     ILM(&'static ILM_TABLE),
 }
 
 impl IlmTableGen {
-    fn lookup_list(&self, ilm_list: &IlmList, compare: &Fn(&IlmEntryWrapped)->bool) -> Option<IlmEntryWrapped> {
+    fn lookup_list(
+        &self,
+        ilm_list: &IlmList,
+        compare: &Fn(&IlmEntryWrapped) -> bool,
+    ) -> Option<IlmEntryWrapped> {
         trace!("IlmTableGen::lookup_list");
         let len: usize = ilm_list.len();
         let mut i = 0;
@@ -515,13 +553,17 @@ impl IlmTableGen {
     }
     fn lookup_by_owner(&self, ilm_key: &IlmKey, owner: u32) -> Option<IlmEntryWrapped> {
         if read_val!(&ILM_TABLE).contains_key(ilm_key) {
-            return self.lookup_list(&read_val!(&ILM_TABLE)[ilm_key], &|ie| owner == read_val!(ie).owner);
+            return self.lookup_list(&read_val!(&ILM_TABLE)[ilm_key], &|ie| {
+                owner == read_val!(ie).owner
+            });
         }
         None
     }
     fn lookup_by_ix(&self, ilm_key: &IlmKey, ilm_ix: u32) -> Option<IlmEntryWrapped> {
         if read_val!(&ILM_TABLE).contains_key(ilm_key) {
-            return self.lookup_list(&read_val!(&ILM_TABLE)[ilm_key], &|ie| ilm_ix == read_val!(ie).ilm_ix);
+            return self.lookup_list(&read_val!(&ILM_TABLE)[ilm_key], &|ie| {
+                ilm_ix == read_val!(ie).ilm_ix
+            });
         }
         None
     }
@@ -529,14 +571,24 @@ impl IlmTableGen {
         ilm_list.push(ilm_entry);
     }
     fn insert(&mut self, ilm_key: IlmKey, ilm_entry: IlmEntryWrapped) {
-        if read_val!(&ILM_TABLE).contains_key(&ilm_key) {
+        trace!("IlmTableGen::insert");
+        if !read_val!(&ILM_TABLE).contains_key(&ilm_key) {
+            trace!("creating new entry");
             let ilm_list: IlmList = Vec::new();
             write_val!(&ILM_TABLE).insert(ilm_key, ilm_list);
         }
-        IlmTableGen::insert_list(
-            &mut write_val!(&ILM_TABLE).get_mut(&ilm_key).unwrap(),
-            ilm_entry,
-        );
+        trace!("insetion to list");
+        match write_val!(&ILM_TABLE).get_mut(&ilm_key) {
+            Some(ll) => {
+                IlmTableGen::insert_list(ll, ilm_entry);
+            }
+            None => {
+                trace!("expected to find linked list on key {:?}", ilm_key);
+            }
+        }
+    }
+    fn remove(&mut self, ilm_key: &IlmKey) {
+        write_val!(&ILM_TABLE).remove(ilm_key);
     }
 }
 
@@ -593,18 +645,13 @@ unsafe fn convert_ftn_add_to_internal(ftn_add_data: *mut FtnAddData) -> Result<F
     Ok(ftn_add_int)
 }
 
-fn _ftn_add(ftn_add_data_int: &FtnAddDataInt) -> i32 {
-    let nhlfe: Option<NhlfeEntryWrapped>;
-    let nhlfe_k: NhlfeKey = NhlfeKey::IP(NhlfeKeyIp {
-        next_hop: ftn_add_data_int.next_hop,
-        out_label: ftn_add_data_int.out_label,
-        out_iface: ftn_add_data_int.out_ifindex,
-        trunk_id: 0,
-        lsp_id: 0,
-        ingress: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-        egress: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-    });
+fn _create_nhlfe_and_xc(
+    nhlfe_k: NhlfeKey,
+    old_xc_ix: u32,
+    old_nhlfe_ix: u32,
+) -> Option<XcEntryWrapped> {
     let xc_entry: XcEntryWrapped;
+    let nhlfe: Option<NhlfeEntryWrapped>;
     let create_xc_entry = |xc_key: XcKey| {
         let new_xc_entry: XcEntryWrapped = Arc::new(ReentrantMutex::new(RefCell::new(Box::new(
             XcEntry::new(&xc_key, None),
@@ -614,11 +661,16 @@ fn _ftn_add(ftn_add_data_int: &FtnAddDataInt) -> i32 {
         new_xc_entry
     };
 
-    if ftn_add_data_int.next_hop.is_ipv4() {
-        nhlfe = NhlfeTableGen::V4(&NHLFE_TABLE4).lookup(&nhlfe_k);
-    } else {
-        nhlfe = NhlfeTableGen::V6(&NHLFE_TABLE6).lookup(&nhlfe_k);
+    match &nhlfe_k {
+        NhlfeKey::IP(nhlfe_k_ip) => {
+            if nhlfe_k_ip.next_hop.is_ipv4() {
+                nhlfe = NhlfeTableGen::V4(&NHLFE_TABLE4).lookup(&nhlfe_k);
+            } else {
+                nhlfe = NhlfeTableGen::V6(&NHLFE_TABLE6).lookup(&nhlfe_k);
+            }
+        }
     }
+
     let xc_key: XcKey;
     match nhlfe {
         Some(nhlfe_exists) => {
@@ -641,17 +693,27 @@ fn _ftn_add(ftn_add_data_int: &FtnAddDataInt) -> i32 {
             }
         }
         None => {
-            let xc_ix = write_val!(XC_ID_TABLE).get_free();
-            let nhlfe_ix = write_val!(NHLFE_ID_TABLE).get_free();
-            if xc_ix == -1 {
+            let xc_ix;
+            let nhlfe_ix;
+            if old_xc_ix > 0 {
+                xc_ix = old_xc_ix;
+            } else {
+                xc_ix = write_val!(XC_ID_TABLE).get_free();
+            }
+            if old_nhlfe_ix > 0 {
+                nhlfe_ix = old_nhlfe_ix;
+            } else {
+                nhlfe_ix = write_val!(NHLFE_ID_TABLE).get_free();
+            }
+            if xc_ix == 0 {
                 trace!("cannot allocate xc ix");
                 write_val!(NHLFE_ID_TABLE).put_free(nhlfe_ix as usize);
-                return -1;
+                return None;
             }
-            if nhlfe_ix == -1 {
+            if nhlfe_ix == 0 {
                 trace!("cannot allocate nhlfe_ix");
                 write_val!(XC_ID_TABLE).put_free(xc_ix as usize);
-                return -1;
+                return None;
             }
             xc_key = XcKey {
                 in_iface: 0,
@@ -660,27 +722,61 @@ fn _ftn_add(ftn_add_data_int: &FtnAddDataInt) -> i32 {
                 nhlfe_ix: nhlfe_ix as u32,
             };
             xc_entry = create_xc_entry(xc_key);
-            let nhlfe_entry: NhlfeEntryWrapped = Arc::new(ReentrantMutex::new(RefCell::new(
-                Box::new(NhlfeEntry::new(
-                    ftn_add_data_int.next_hop,
-                    ftn_add_data_int.out_label,
-                    ftn_add_data_int.out_ifindex,
-                    0,
-                    0,
-                    IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-                    IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-                    xc_ix as u32,
-                    nhlfe_ix as u32,
-                )),
-            )));
+            let nhlfe_entry: NhlfeEntryWrapped;
+            match &nhlfe_k {
+                NhlfeKey::IP(nhlfe_k_ip) => {
+                    nhlfe_entry = Arc::new(ReentrantMutex::new(RefCell::new(Box::new(
+                        NhlfeEntry::new(
+                            nhlfe_k_ip.next_hop,
+                            nhlfe_k_ip.out_label,
+                            nhlfe_k_ip.out_iface,
+                            0,
+                            0,
+                            nhlfe_k_ip.ingress,
+                            nhlfe_k_ip.egress,
+                            xc_ix,
+                            nhlfe_ix,
+                        ),
+                    ))));
+                }
+            }
             write_val!(xc_entry).set_nhlfe(Some(Arc::clone(&nhlfe_entry)));
-            if ftn_add_data_int.next_hop.is_ipv4() {
-                NhlfeTableGen::V4(&NHLFE_TABLE4).insert(nhlfe_k, nhlfe_entry);
-            } else {
-                NhlfeTableGen::V6(&NHLFE_TABLE6).insert(nhlfe_k, nhlfe_entry);
+            match &nhlfe_k {
+                NhlfeKey::IP(nhlfe_k_ip) => {
+                    if nhlfe_k_ip.next_hop.is_ipv4() {
+                        NhlfeTableGen::V4(&NHLFE_TABLE4).insert(nhlfe_k, nhlfe_entry);
+                    } else {
+                        NhlfeTableGen::V6(&NHLFE_TABLE6).insert(nhlfe_k, nhlfe_entry);
+                    }
+                }
             }
         }
     }
+    Some(xc_entry)
+}
+
+fn _ftn_add(ftn_add_data_int: &FtnAddDataInt) -> i32 {
+    let xc_entry: XcEntryWrapped;
+    let nhlfe_k: NhlfeKey = NhlfeKey::IP(NhlfeKeyIp {
+        next_hop: ftn_add_data_int.next_hop,
+        out_label: ftn_add_data_int.out_label,
+        out_iface: ftn_add_data_int.out_ifindex,
+        trunk_id: 0,
+        lsp_id: 0,
+        ingress: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+        egress: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+    });
+
+    match _create_nhlfe_and_xc(nhlfe_k, 0, 0) {
+        Some(ret_xc_entry) => {
+            xc_entry = ret_xc_entry;
+        }
+        None => {
+            trace!("cannot create XC entry!");
+            return -1;
+        }
+    }
+
     let ftn_entry: FtnEntryWrapped = Arc::new(ReentrantMutex::new(RefCell::new(Box::new(
         FtnEntry::new(ftn_add_data_int.fec, ftn_add_data_int.ftn_ix),
     ))));
@@ -843,7 +939,7 @@ pub struct IlmAddDataInt {
     pub next_hop: IpAddr,
     pub out_ifindex: u32,
     pub out_label: u32,
-    pub ilm_idx: u32,
+    pub ilm_ix: u32,
     pub owner: u32,
 }
 
@@ -854,7 +950,7 @@ impl IlmAddDataInt {
         next_hop: IpAddr,
         out_ifindex: u32,
         out_label: u32,
-        ilm_idx: u32,
+        ilm_ix: u32,
         owner: u32,
     ) -> IlmAddDataInt {
         IlmAddDataInt {
@@ -863,7 +959,7 @@ impl IlmAddDataInt {
             next_hop: next_hop,
             out_ifindex: out_ifindex,
             out_label: out_label,
-            ilm_idx: ilm_idx,
+            ilm_ix: ilm_ix,
             owner: owner,
         }
     }
@@ -872,23 +968,112 @@ impl IlmAddDataInt {
 pub struct IlmDelDataInt {
     pub in_label: u32,
     pub in_iface: u32,
-    pub ilm_idx: u32,
+    pub ilm_ix: u32,
     pub owner: u32,
 }
 
 impl IlmDelDataInt {
-    fn new(in_label: u32, in_iface: u32, ilm_idx: u32, owner: u32) -> IlmDelDataInt {
+    fn new(in_label: u32, in_iface: u32, ilm_ix: u32, owner: u32) -> IlmDelDataInt {
         IlmDelDataInt {
             in_label: in_label,
             in_iface: in_iface,
-            ilm_idx: ilm_idx,
+            ilm_ix: ilm_ix,
             owner: owner,
         }
     }
 }
 
-fn _ilm_add(ilm_add_int: &IlmAddDataInt) -> i32 {
+fn _ilm_add(
+    ilm_add_int: &mut IlmAddDataInt,
+    ilm_key: IlmKey,
+    old_xc_ix: u32,
+    old_nhlfe_ix: u32,
+) -> i32 {
+    trace!("_ilm_add");
+    let xc_entry: XcEntryWrapped;
+    let nhlfe_k: NhlfeKey = NhlfeKey::IP(NhlfeKeyIp {
+        next_hop: ilm_add_int.next_hop,
+        out_label: ilm_add_int.out_label,
+        out_iface: ilm_add_int.out_ifindex,
+        trunk_id: 0,
+        lsp_id: 0,
+        ingress: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+        egress: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+    });
+
+    match _create_nhlfe_and_xc(nhlfe_k, old_xc_ix, old_nhlfe_ix) {
+        Some(ret_xc_entry) => {
+            xc_entry = ret_xc_entry;
+        }
+        None => {
+            trace!("Cannot create XC entry!");
+            return -1;
+        }
+    }
+    let ilm_entry: IlmEntryWrapped = Arc::new(ReentrantMutex::new(RefCell::new(Box::new(
+        IlmEntry::new(ilm_key, ilm_add_int.ilm_ix, ilm_add_int.owner),
+    ))));
+    write_val!(ilm_entry).add_xc_entry(xc_entry);
+    IlmTableGen::ILM(&ILM_TABLE).insert(ilm_key, ilm_entry);
+    0
+}
+
+fn _ilm_update(
+    ilm_add_int: &mut IlmAddDataInt,
+    existing_ilm: IlmEntryWrapped,
+    ilm_key: IlmKey,
+) -> i32 {
+    trace!("_ilm_update");
+    let xc_entry: Option<XcEntryWrapped> = write_val!(existing_ilm).iterate_xc_list(&|xc| {
+        match &read_val!(xc).nhlfe {
+            Some(nhlfe) => match &read_val!(nhlfe).nhlfe_key {
+                NhlfeKey::IP(nhlfe_k_ip) => {
+                    if nhlfe_k_ip.next_hop == ilm_add_int.next_hop {
+                        trace!("next hops equal");
+                        return false;
+                    }
+                }
+            },
+            None => {
+                trace!("Expected to find nhlfe");
+            }
+        }
+        true
+    });
+    match xc_entry {
+        None => {
+            _ilm_add(ilm_add_int, ilm_key, 0, 0);
+        }
+        Some(existing_xc_entry) => {
+            trace!("updating ILM!");
+        }
+    }
+    0
+}
+
+fn _ilm_add_update(ilm_add_int: &mut IlmAddDataInt) -> i32 {
     let ilm_key = IlmKey::PKT(IlmKeyPkt::new(ilm_add_int.in_label, ilm_add_int.in_iface));
+    if ilm_add_int.ilm_ix > 0 {
+        match IlmTableGen::ILM(&ILM_TABLE).lookup_by_ix(&ilm_key, ilm_add_int.ilm_ix) {
+            Some(existing_ilm) => {
+                trace!("ILM entry already exists");
+                return _ilm_update(ilm_add_int, existing_ilm, ilm_key);
+            }
+            None => {
+                trace!("creating ILM entry");
+            }
+        }
+    } else {
+        match write_val!(ILM_ID_TABLE).get_free() {
+            0 => {
+                trace!("Cannot allocate ILM IX");
+                return -1;
+            }
+            allocated_ix => {
+                ilm_add_int.ilm_ix = allocated_ix;
+            }
+        }
+    }
     match IlmTableGen::ILM(&ILM_TABLE).lookup_by_owner(&ilm_key, ilm_add_int.owner) {
         Some(_) => {
             trace!("ILM entry already exists");
@@ -898,17 +1083,13 @@ fn _ilm_add(ilm_add_int: &IlmAddDataInt) -> i32 {
             trace!("creating ILM entry");
         }
     }
-    let ilm_entry: IlmEntryWrapped = Arc::new(ReentrantMutex::new(RefCell::new(Box::new(
-        IlmEntry::new(ilm_key, ilm_add_int.ilm_idx, ilm_add_int.owner),
-    ))));
-    IlmTableGen::ILM(&ILM_TABLE).insert(ilm_key, ilm_entry);
-    0
+    _ilm_add(ilm_add_int, ilm_key, 0, 0)
 }
 
 #[no_mangle]
 pub extern "C" fn ilm_add(ilm_add_data: *mut IlmAddData) -> i32 {
-    let ilm_add_int: IlmAddDataInt;
-    trace!("ilm_del");
+    let mut ilm_add_int: IlmAddDataInt;
+    trace!("ilm_add");
     unsafe {
         match convert_ilm_add_to_internal(ilm_add_data) {
             Ok(ret_val) => {
@@ -920,10 +1101,29 @@ pub extern "C" fn ilm_add(ilm_add_data: *mut IlmAddData) -> i32 {
             }
         }
     }
-    _ilm_add(&ilm_add_int)
+    _ilm_add_update(&mut ilm_add_int)
 }
 
 fn _ilm_del(ilm_del_int: &IlmDelDataInt) -> i32 {
+    let ilm_key = IlmKey::PKT(IlmKeyPkt::new(ilm_del_int.in_label, ilm_del_int.in_iface));
+    let ilm_entry;
+    if ilm_del_int.ilm_ix > 0 {
+        ilm_entry = IlmTableGen::ILM(&ILM_TABLE).lookup_by_ix(&ilm_key, ilm_del_int.ilm_ix);
+    } else {
+        ilm_entry = IlmTableGen::ILM(&ILM_TABLE).lookup_by_owner(&ilm_key, ilm_del_int.owner);
+    }
+    match ilm_entry {
+        None => {
+            trace!("ILM entry is not found");
+            return -1;
+        }
+        Some(existing_ilm) => {
+            trace!("_ilm_del: freeing xc list");
+            write_val!(existing_ilm).free_xc_list();
+            trace!("_ilm_del: removing ilm entry");
+            IlmTableGen::ILM(&ILM_TABLE).remove(&ilm_key);
+        }
+    }
     0
 }
 

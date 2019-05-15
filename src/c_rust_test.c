@@ -511,6 +511,7 @@ int c_rust_prefix_tree_test1()
 #define FTN_TEST1_INITIAL_NEXT_HOP "2.2.2.2"
 #define FTN_TEST1_INITIAL_IFINDEX 1
 #define FTN_TEST1_INITIAL_FTN_IX 1
+#define FTN_TEST1_INITIAL_LABEL 100
 
 void setup_ftn_entry_add(FtnAddData *ftn_add_data, unsigned int *current_label, unsigned int ifindex, unsigned int ftn_ix)
 {
@@ -540,6 +541,7 @@ int c_rust_ftn_test1()
 		setup_ip_addr(&ftn_add_data.fec, &current_prefix);
 		build_ip_addr(FTN_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
 		setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
+		current_label = FTN_TEST1_INITIAL_LABEL;
 		setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST1_INITIAL_IFINDEX, FTN_TEST1_INITIAL_FTN_IX + i);
 		if (ftn_add(&ftn_add_data) != 0) {
 			printf("failed here %s %d\n",__FILE__,__LINE__);
@@ -560,6 +562,7 @@ int c_rust_ftn_test1()
 		setup_ip_addr(&ftn_add_data.fec, &current_prefix);
 		build_ip_addr(FTN_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
 		setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
+		current_label = FTN_TEST1_INITIAL_LABEL;
 		setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST1_INITIAL_IFINDEX, FTN_TEST1_INITIAL_FTN_IX + i);
 		if (ftn_add(&ftn_add_data) != 0) {
 			printf("failed here %s %d\n",__FILE__,__LINE__);
@@ -569,6 +572,84 @@ int c_rust_ftn_test1()
 		setup_ip_addr(&ftn_del_data.fec, &current_prefix);
 		setup_ftn_entry_del(&ftn_del_data, FTN_TEST1_INITIAL_FTN_IX + i);
 		if (ftn_del(&ftn_del_data) != 0) {
+			printf("failed here %s %d\n",__FILE__,__LINE__);
+			return -1;
+		}
+	}
+	return 0;
+}
+
+#define ILM_TEST1_ENTRIES_NUMBER 1
+#define ILM_TEST1_INITIAL_NEXT_HOP "2.2.2.2"
+#define ILM_TEST1_INITIAL_IFINDEX 1
+#define ILM_TEST1_INITIAL_ILM_IX 1
+#define ILM_TEST1_INITIAL_OWNER 1
+
+void setup_ilm_entry_add(IlmAddData *ilm_add_data, unsigned int *current_label, unsigned int ifindex, unsigned int owner, unsigned int ilm_ix)
+{
+	ilm_add_data->out_ifindex = ifindex;
+	ilm_add_data->out_label = current_label;
+	ilm_add_data->in_iface = ifindex;
+	ilm_add_data->in_label = *current_label;
+	ilm_add_data->ilm_ix = ilm_ix;
+	ilm_add_data->owner = owner;
+}
+
+void setup_ilm_entry_del(IlmDelData *ilm_del_data, unsigned int *current_label, unsigned int ifindex, unsigned int owner, unsigned int ilm_ix)
+{
+	ilm_del_data->ilm_ix = ilm_ix;
+	ilm_del_data->in_label = *current_label;
+	ilm_del_data->in_iface = ifindex;
+	ilm_del_data->owner = owner;
+}
+
+int c_rust_ilm_test1()
+{
+	IlmAddData ilm_add_data;
+	IlmDelData ilm_del_data;
+	unsigned int current_prefix;
+	unsigned int current_next_hop;
+	unsigned int current_label;
+
+	init_logger();
+
+	for (int i = 0; i < ILM_TEST1_ENTRIES_NUMBER; i++) {
+		build_ip_addr(ILM_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
+		setup_ip_addr(&ilm_add_data.next_hop, &current_next_hop);
+		current_label = FTN_TEST1_INITIAL_LABEL + i;
+		setup_ilm_entry_add(&ilm_add_data, &current_label, ILM_TEST1_INITIAL_IFINDEX, ILM_TEST1_INITIAL_OWNER, ILM_TEST1_INITIAL_ILM_IX + i);
+		if (ilm_add(&ilm_add_data) != 0) {
+			printf("failed here %s %d\n",__FILE__,__LINE__);
+			return -1;
+		}
+	}
+	for (int i = 0; i < ILM_TEST1_ENTRIES_NUMBER; i++) {
+		setup_ilm_entry_del(&ilm_del_data, 
+							&current_label, 
+							ILM_TEST1_INITIAL_IFINDEX, 
+							ILM_TEST1_INITIAL_OWNER, 
+							ILM_TEST1_INITIAL_ILM_IX + i);
+		current_label = FTN_TEST1_INITIAL_LABEL + i;
+		if (ilm_del(&ilm_del_data) != 0) {
+			printf("failed here %s %d\n",__FILE__,__LINE__);
+			return -1;
+		}
+	}
+	for (int i = 0; i < ILM_TEST1_ENTRIES_NUMBER; i++) {
+		build_ip_addr(ILM_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
+		setup_ip_addr(&ilm_add_data.next_hop, &current_next_hop);
+		current_label = FTN_TEST1_INITIAL_LABEL + i;
+		setup_ilm_entry_add(&ilm_add_data, &current_label, ILM_TEST1_INITIAL_IFINDEX, ILM_TEST1_INITIAL_OWNER, ILM_TEST1_INITIAL_ILM_IX + i);
+		if (ilm_add(&ilm_add_data) != 0) {
+			printf("failed here %s %d\n",__FILE__,__LINE__);
+			return -1;
+		}
+		setup_ilm_entry_del(&ilm_del_data, 
+							&current_label, 
+							ILM_TEST1_INITIAL_IFINDEX, 
+							ILM_TEST1_INITIAL_OWNER, 
+							ILM_TEST1_INITIAL_ILM_IX + i);
+		if (ilm_del(&ilm_del_data) != 0) {
 			printf("failed here %s %d\n",__FILE__,__LINE__);
 			return -1;
 		}
