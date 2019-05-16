@@ -533,6 +533,7 @@ int c_rust_ftn_test1()
 	unsigned int current_prefix;
 	unsigned int current_next_hop;
 	unsigned int current_label;
+	NhAddDel nh_add_del_data;
 
 	init_logger();
 
@@ -543,6 +544,10 @@ int c_rust_ftn_test1()
 		setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
 		current_label = FTN_TEST1_INITIAL_LABEL;
 		setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST1_INITIAL_IFINDEX, FTN_TEST1_INITIAL_FTN_IX + i);
+		setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+		nh_add_del_data.ifindex = 1;
+		nh_add_del_data.is_add = 1;
+		nh_add_del(&nh_add_del_data);
 		if (ftn_add(&ftn_add_data) != 0) {
 			printf("failed here %s %d\n",__FILE__,__LINE__);
 			return -1;
@@ -552,6 +557,10 @@ int c_rust_ftn_test1()
 		build_ip_addr(FTN_TEST1_INITIAL_PREFIX,i, &current_prefix);
 		setup_ip_addr(&ftn_del_data.fec, &current_prefix);
 		setup_ftn_entry_del(&ftn_del_data, FTN_TEST1_INITIAL_FTN_IX + i);
+		setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+		nh_add_del_data.ifindex = 1;
+		nh_add_del_data.is_add = 0;
+		nh_add_del(&nh_add_del_data);
 		if (ftn_del(&ftn_del_data) != 0) {
 			printf("failed here %s %d\n",__FILE__,__LINE__);
 			return -1;
@@ -564,6 +573,10 @@ int c_rust_ftn_test1()
 		setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
 		current_label = FTN_TEST1_INITIAL_LABEL;
 		setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST1_INITIAL_IFINDEX, FTN_TEST1_INITIAL_FTN_IX + i);
+		setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+		nh_add_del_data.ifindex = 1;
+		nh_add_del_data.is_add = 1;
+		nh_add_del(&nh_add_del_data);
 		if (ftn_add(&ftn_add_data) != 0) {
 			printf("failed here %s %d\n",__FILE__,__LINE__);
 			return -1;
@@ -571,10 +584,58 @@ int c_rust_ftn_test1()
 		build_ip_addr(FTN_TEST1_INITIAL_PREFIX,i, &current_prefix);
 		setup_ip_addr(&ftn_del_data.fec, &current_prefix);
 		setup_ftn_entry_del(&ftn_del_data, FTN_TEST1_INITIAL_FTN_IX + i);
+		setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+		nh_add_del_data.ifindex = 1;
+		nh_add_del_data.is_add = 0;
+		nh_add_del(&nh_add_del_data);
 		if (ftn_del(&ftn_del_data) != 0) {
 			printf("failed here %s %d\n",__FILE__,__LINE__);
 			return -1;
 		}
+	}
+	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,0, &current_prefix);
+	setup_ip_addr(&ftn_add_data.fec, &current_prefix);
+	build_ip_addr(FTN_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
+	setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
+	current_label = FTN_TEST1_INITIAL_LABEL;
+	setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST1_INITIAL_IFINDEX, FTN_TEST1_INITIAL_FTN_IX);
+	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+	nh_add_del_data.ifindex = 1;
+	nh_add_del_data.is_add = 1;
+	nh_add_del(&nh_add_del_data);
+	if (ftn_add(&ftn_add_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,1, &current_prefix);
+	setup_ip_addr(&ftn_add_data.fec, &current_prefix);
+	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,0, &current_next_hop);
+	setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
+	current_label = FTN_TEST1_INITIAL_LABEL+1;
+	setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST1_INITIAL_IFINDEX, FTN_TEST1_INITIAL_FTN_IX + 1);
+    if (ftn_add(&ftn_add_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+
+	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,0, &current_prefix);
+	setup_ip_addr(&ftn_del_data.fec, &current_prefix);
+	setup_ftn_entry_del(&ftn_del_data, FTN_TEST1_INITIAL_FTN_IX);
+	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+	nh_add_del_data.ifindex = 1;
+	nh_add_del_data.is_add = 0;
+	nh_add_del(&nh_add_del_data);
+	if (ftn_del(&ftn_del_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,1, &current_prefix);
+	setup_ip_addr(&ftn_del_data.fec, &current_prefix);
+	setup_ftn_entry_del(&ftn_del_data, FTN_TEST1_INITIAL_FTN_IX + 1);
+	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+	if (ftn_del(&ftn_del_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
 	}
 	return 0;
 }
@@ -610,6 +671,7 @@ int c_rust_ilm_test1()
 	unsigned int current_prefix;
 	unsigned int current_next_hop;
 	unsigned int current_label;
+	NhAddDel nh_add_del_data;
 
 	init_logger();
 
@@ -618,6 +680,10 @@ int c_rust_ilm_test1()
 		setup_ip_addr(&ilm_add_data.next_hop, &current_next_hop);
 		current_label = FTN_TEST1_INITIAL_LABEL + i;
 		setup_ilm_entry_add(&ilm_add_data, &current_label, ILM_TEST1_INITIAL_IFINDEX, ILM_TEST1_INITIAL_OWNER, ILM_TEST1_INITIAL_ILM_IX + i);
+		setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+		nh_add_del_data.ifindex = 1;
+		nh_add_del_data.is_add = 1;
+		nh_add_del(&nh_add_del_data);
 		if (ilm_add(&ilm_add_data) != 0) {
 			printf("failed here %s %d\n",__FILE__,__LINE__);
 			return -1;
@@ -630,6 +696,10 @@ int c_rust_ilm_test1()
 							ILM_TEST1_INITIAL_OWNER, 
 							ILM_TEST1_INITIAL_ILM_IX + i);
 		current_label = FTN_TEST1_INITIAL_LABEL + i;
+		setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+		nh_add_del_data.ifindex = 1;
+		nh_add_del_data.is_add = 0;
+		nh_add_del(&nh_add_del_data);
 		if (ilm_del(&ilm_del_data) != 0) {
 			printf("failed here %s %d\n",__FILE__,__LINE__);
 			return -1;
@@ -640,6 +710,10 @@ int c_rust_ilm_test1()
 		setup_ip_addr(&ilm_add_data.next_hop, &current_next_hop);
 		current_label = FTN_TEST1_INITIAL_LABEL + i;
 		setup_ilm_entry_add(&ilm_add_data, &current_label, ILM_TEST1_INITIAL_IFINDEX, ILM_TEST1_INITIAL_OWNER, ILM_TEST1_INITIAL_ILM_IX + i);
+		setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+		nh_add_del_data.ifindex = 1;
+		nh_add_del_data.is_add = 1;
+		nh_add_del(&nh_add_del_data);
 		if (ilm_add(&ilm_add_data) != 0) {
 			printf("failed here %s %d\n",__FILE__,__LINE__);
 			return -1;
@@ -649,6 +723,10 @@ int c_rust_ilm_test1()
 							ILM_TEST1_INITIAL_IFINDEX, 
 							ILM_TEST1_INITIAL_OWNER, 
 							ILM_TEST1_INITIAL_ILM_IX + i);
+		setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+		nh_add_del_data.ifindex = 1;
+		nh_add_del_data.is_add = 0;
+		nh_add_del(&nh_add_del_data);
 		if (ilm_del(&ilm_del_data) != 0) {
 			printf("failed here %s %d\n",__FILE__,__LINE__);
 			return -1;

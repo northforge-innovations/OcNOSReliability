@@ -24,12 +24,18 @@ type IlmEntryWrapped = Arc<ReentrantMutex<RefCell<Box<IlmEntry>>>>;
 type XcList = Vec<XcEntryWrapped>;
 type FtnList = Vec<FtnEntryWrapped>;
 type IlmList = Vec<IlmEntryWrapped>;
-type FtnTable = Arc<ReentrantMutex<RefCell<PatriciaMap<FtnList>>>>;
+pub struct FecEntry {
+    ftn_list: FtnList,
+    dependent_ftn_down_list: FtnList,
+    dependent_ilm_down_list: IlmList,
+}
+type FtnTable = Arc<ReentrantMutex<RefCell<PatriciaMap<FecEntry>>>>;
 type IlmTable = Arc<ReentrantMutex<RefCell<HashMap<IlmKey, IlmList>>>>;
 type XcTable = Arc<ReentrantMutex<RefCell<HashMap<XcKey, XcEntryWrapped>>>>;
 type NhlfeEntryWrapped = Arc<ReentrantMutex<RefCell<Box<NhlfeEntry>>>>;
 type NhlfeTable = Arc<ReentrantMutex<RefCell<HashMap<NhlfeKey, NhlfeEntryWrapped>>>>;
 type IdTable = Arc<ReentrantMutex<RefCell<Box<IdMap>>>>;
+type NhTable = Arc<ReentrantMutex<RefCell<PatriciaMap<u32>>>>;
 
 lazy_static! {
     pub static ref FTN_TABLE4: FtnTable =
@@ -55,6 +61,10 @@ lazy_static! {
         Arc::new(ReentrantMutex::new(RefCell::new(Box::new(IdMap {
             ids: [false; 1024]
         }))));
+    pub static ref NH_TABLE4: NhTable =
+        Arc::new(ReentrantMutex::new(RefCell::new(PatriciaMap::new())));
+    pub static ref NH_TABLE6: NhTable =
+        Arc::new(ReentrantMutex::new(RefCell::new(PatriciaMap::new())));
 }
 
 pub struct IdMap {
@@ -63,12 +73,13 @@ pub struct IdMap {
 
 impl IdMap {
     fn get_free(&mut self) -> u32 {
-        let i = 0;
+        let mut i = 0;
         while i < 1024 {
             if !self.ids[i] {
                 self.ids[i] = true;
                 return (i + 1) as u32;
             }
+            i = i + 1;
         }
         0
     }
@@ -81,43 +92,122 @@ impl IdMap {
     }
 }
 
+pub enum NhTableGen {
+    V4(&'static NH_TABLE4),
+    V6(&'static NH_TABLE6),
+}
+
+impl NhTableGen {
+    fn insert(&self, key: IpAddr, entry: u32) {
+        match self {
+            NhTableGen::V4(_) => match key {
+                IpAddr::V4(ipv4) => {
+                    write_val!(&NH_TABLE4).insert(ipv4.octets(), entry);
+                }
+                IpAddr::V6(_) => {
+                    trace!("IPv6 is unexpected here");
+                }
+            },
+            NhTableGen::V6(_) => match key {
+                IpAddr::V6(ipv6) => {
+                    write_val!(&NH_TABLE6).insert(ipv6.octets(), entry);
+                }
+                IpAddr::V4(_) => {
+                    trace!("IPV4 is unexpected here");
+                }
+            },
+        }
+    }
+    fn lookup(&self, key: IpAddr) -> Result<u32, i32> {
+        match self {
+            NhTableGen::V4(_) => match key {
+                IpAddr::V4(ipv4) => {
+                    if read_val!(&NH_TABLE4).contains_key(ipv4.octets()) {
+                        return Ok(*read_val!(&NH_TABLE4).get(ipv4.octets()).unwrap());
+                    }
+                }
+                IpAddr::V6(_) => {
+                    trace!("IPV6 is unexpected here");
+                }
+            },
+            NhTableGen::V6(_) => match key {
+                IpAddr::V6(ipv6) => {
+                    if read_val!(&NH_TABLE6).contains_key(ipv6.octets()) {
+                        return Ok(*read_val!(&NH_TABLE6).get(ipv6.octets()).unwrap());
+                    }
+                }
+                IpAddr::V4(_) => {
+                    trace!("IPV4 is unexpected here");
+                }
+            },
+        }
+        Err(-1)
+    }
+    fn remove(&self, key: IpAddr) {
+        match self {
+            NhTableGen::V4(_) => match key {
+                IpAddr::V4(ipv4) => {
+                    write_val!(&NH_TABLE4).remove(ipv4.octets());
+                }
+                IpAddr::V6(_) => {
+                    trace!("IPv6 is unexpected here");
+                }
+            },
+            NhTableGen::V6(_) => match key {
+                IpAddr::V6(ipv6) => {
+                    write_val!(&NH_TABLE6).remove(ipv6.octets());
+                }
+                IpAddr::V4(_) => {
+                    trace!("IPv4 is unexpected here");
+                }
+            },
+        }
+    }
+}
+
 pub enum FtnTableGen {
     V4(&'static FTN_TABLE4),
     V6(&'static FTN_TABLE6),
 }
 
+fn insert_list<E>(list: &mut Vec<E>, entry: E) {
+    trace!("insert_list");
+    list.push(entry);
+}
+fn list_is_empty<E>(list: &Vec<E>) -> bool {
+    trace!("list_is_empty");
+    list.len() == 0
+}
+
 impl FtnTableGen {
-    fn lookup_list(ftn_list: &FtnList, ftn_ix: u32) -> Option<FtnEntryWrapped> {
+    fn lookup_list(
+        ftn_list: &FtnList,
+        on_element: &Fn(&FtnEntryWrapped) -> bool,
+    ) -> Option<FtnEntryWrapped> {
         trace!("FtnTableGen::lookup_list");
         let len: usize = ftn_list.len();
         let mut i = 0;
         while i < len {
-            if read_val!(ftn_list[i]).ftn_ix == ftn_ix {
+            if on_element(&ftn_list[i]) {
                 return Some(Arc::clone(&ftn_list[i]));
             }
             i += 1;
         }
         None
     }
-    fn insert_list(ftn_list: &mut FtnList, entry: FtnEntryWrapped) {
-        trace!("FtnTableGen::insert_list");
-        ftn_list.push(entry);
-    }
-    fn list_is_empty(ftn_list: &FtnList) -> bool {
-        trace!("FtnTableGen::list_is_empty");
-        ftn_list.len() == 0
-    }
-    fn remove_from_list(ftn_list: &mut FtnList, ftn_ix: u32) {
+    fn remove_from_list(ftn_list: &mut FtnList, ftn_ix: u32) -> Option<FtnEntryWrapped> {
         trace!("FtnTableGen::remove_from_list");
         let len: usize = ftn_list.len();
         let mut i = 0;
         while i < len {
             if read_val!(ftn_list[i]).ftn_ix == ftn_ix {
+                let removed_ftn = Arc::clone(&ftn_list[i]);
                 ftn_list.remove(i);
-                break;
+                return Some(removed_ftn);
             }
             i += 1;
         }
+        None
     }
     fn lookup(&self, key: &FtnKey, ftn_ix: u32) -> Option<FtnEntryWrapped> {
         trace!("FtnTableGen::lookup");
@@ -127,8 +217,8 @@ impl FtnTableGen {
                     IpAddr::V4(ipv4) => {
                         if read_val!(FTN_TABLE4).contains_key(ipv4.octets()) {
                             return FtnTableGen::lookup_list(
-                                &read_val!(FTN_TABLE4).get(ipv4.octets()).unwrap(),
-                                ftn_ix,
+                                &read_val!(FTN_TABLE4).get(ipv4.octets()).unwrap().ftn_list,
+                                &|ie| ftn_ix == read_val!(ie).ftn_ix,
                             );
                         }
                     }
@@ -142,8 +232,8 @@ impl FtnTableGen {
                     IpAddr::V6(ipv6) => {
                         if read_val!(FTN_TABLE6).contains_key(ipv6.octets()) {
                             return FtnTableGen::lookup_list(
-                                &read_val!(FTN_TABLE6).get(ipv6.octets()).unwrap(),
-                                ftn_ix,
+                                &read_val!(FTN_TABLE6).get(ipv6.octets()).unwrap().ftn_list,
+                                &|ie| ftn_ix == read_val!(ie).ftn_ix,
                             );
                         }
                     }
@@ -163,10 +253,20 @@ impl FtnTableGen {
                     IpAddr::V4(ipv4) => {
                         if !read_val!(FTN_TABLE4).contains_key(ipv4.octets()) {
                             trace!("not found, create new");
-                            write_val!(FTN_TABLE4).insert(ipv4.octets(), Vec::new());
+                            write_val!(FTN_TABLE4).insert(
+                                ipv4.octets(),
+                                FecEntry {
+                                    ftn_list: Vec::new(),
+                                    dependent_ftn_down_list: Vec::new(),
+                                    dependent_ilm_down_list: Vec::new(),
+                                },
+                            );
                         }
-                        FtnTableGen::insert_list(
-                            write_val!(FTN_TABLE4).get_mut(ipv4.octets()).unwrap(),
+                        insert_list(
+                            &mut write_val!(FTN_TABLE4)
+                                .get_mut(ipv4.octets())
+                                .unwrap()
+                                .ftn_list,
                             entry,
                         );
                     }
@@ -180,10 +280,20 @@ impl FtnTableGen {
                     IpAddr::V6(ipv6) => {
                         if !read_val!(FTN_TABLE6).contains_key(ipv6.octets()) {
                             trace!("not found, create new");
-                            write_val!(FTN_TABLE6).insert(ipv6.octets(), Vec::new());
+                            write_val!(FTN_TABLE6).insert(
+                                ipv6.octets(),
+                                FecEntry {
+                                    ftn_list: Vec::new(),
+                                    dependent_ftn_down_list: Vec::new(),
+                                    dependent_ilm_down_list: Vec::new(),
+                                },
+                            );
                         }
-                        FtnTableGen::insert_list(
-                            write_val!(FTN_TABLE6).get_mut(ipv6.octets()).unwrap(),
+                        insert_list(
+                            &mut write_val!(FTN_TABLE6)
+                                .get_mut(ipv6.octets())
+                                .unwrap()
+                                .ftn_list,
                             entry,
                         );
                     }
@@ -194,18 +304,128 @@ impl FtnTableGen {
             },
         }
     }
+    fn process_ftn_dependent_entry(dep_ftn: &FtnEntryWrapped, fec: &IpAddr) {
+        match fec {
+            IpAddr::V4(ipv4) => {
+                if read_val!(FTN_TABLE4).contains_key(ipv4.octets()) {
+                    match FtnTableGen::lookup_list(
+                        &read_val!(FTN_TABLE4).get(ipv4.octets()).unwrap().ftn_list,
+                        &|ie| true == read_val!(ie).state,
+                    ) {
+                        Some(parent_ftn) => {
+                            write_val!(parent_ftn).add_to_ftn_up_list(Arc::clone(dep_ftn));
+                        }
+                        None => {
+                            insert_list(
+                                &mut write_val!(FTN_TABLE4)
+                                    .get_mut(ipv4.octets())
+                                    .unwrap()
+                                    .dependent_ftn_down_list,
+                                Arc::clone(&dep_ftn),
+                            );
+                        }
+                    }
+                }
+            }
+            IpAddr::V6(ipv6) => {
+                if read_val!(FTN_TABLE6).contains_key(ipv6.octets()) {
+                    match FtnTableGen::lookup_list(
+                        &read_val!(FTN_TABLE6).get(ipv6.octets()).unwrap().ftn_list,
+                        &|ie| true == read_val!(ie).state,
+                    ) {
+                        Some(parent_ftn) => {
+                            write_val!(parent_ftn).add_to_ftn_up_list(Arc::clone(&dep_ftn));
+                        }
+                        None => {
+                            insert_list(
+                                &mut write_val!(FTN_TABLE6)
+                                    .get_mut(ipv6.octets())
+                                    .unwrap()
+                                    .dependent_ftn_down_list,
+                                Arc::clone(&dep_ftn),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    fn process_ilm_dependent_entry(dep_ilm: IlmEntryWrapped, fec: &IpAddr) {
+        match fec {
+            IpAddr::V4(ipv4) => {
+                if read_val!(FTN_TABLE4).contains_key(ipv4.octets()) {
+                    match FtnTableGen::lookup_list(
+                        &read_val!(FTN_TABLE4).get(ipv4.octets()).unwrap().ftn_list,
+                        &|ie| true == read_val!(ie).state,
+                    ) {
+                        Some(parent_ilm) => {
+                            write_val!(parent_ilm).add_to_ilm_up_list(Arc::clone(&dep_ilm));
+                        }
+                        None => {
+                            insert_list(
+                                &mut write_val!(FTN_TABLE4)
+                                    .get_mut(ipv4.octets())
+                                    .unwrap()
+                                    .dependent_ilm_down_list,
+                                Arc::clone(&dep_ilm),
+                            );
+                        }
+                    }
+                }
+            }
+            IpAddr::V6(ipv6) => {
+                if read_val!(FTN_TABLE6).contains_key(ipv6.octets()) {
+                    match FtnTableGen::lookup_list(
+                        &read_val!(FTN_TABLE6).get(ipv6.octets()).unwrap().ftn_list,
+                        &|ie| true == read_val!(ie).state,
+                    ) {
+                        Some(parent_ilm) => {
+                            write_val!(parent_ilm).add_to_ilm_up_list(Arc::clone(&dep_ilm));
+                        }
+                        None => {
+                            insert_list(
+                                &mut write_val!(FTN_TABLE6)
+                                    .get_mut(ipv6.octets())
+                                    .unwrap()
+                                    .dependent_ilm_down_list,
+                                Arc::clone(&dep_ilm),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
     fn remove(&self, key: &FtnKey, ftn_ix: u32) {
         trace!("FtnTableGen::remove");
         match self {
             FtnTableGen::V4(_) => match key {
                 FtnKey::IP(key_ip) => match key_ip.prefix {
                     IpAddr::V4(ipv4) => {
-                        FtnTableGen::remove_from_list(
-                            write_val!(FTN_TABLE4).get_mut(ipv4.octets()).unwrap(),
+                        let removed_ftn = FtnTableGen::remove_from_list(
+                            &mut write_val!(FTN_TABLE4)
+                                .get_mut(ipv4.octets())
+                                .unwrap()
+                                .ftn_list,
                             ftn_ix,
                         );
-                        if FtnTableGen::list_is_empty(
-                            read_val!(FTN_TABLE4).get(ipv4.octets()).unwrap(),
+                        if removed_ftn.is_some() {
+                            let removed_ftn_unwarp = Arc::clone(&removed_ftn.unwrap());
+                            write_val!(removed_ftn_unwarp).clean_ftn_up_list();
+                            write_val!(removed_ftn_unwarp).clean_ilm_up_list();
+                        }
+                        if list_is_empty(
+                            &read_val!(FTN_TABLE4).get(ipv4.octets()).unwrap().ftn_list,
+                        ) && list_is_empty(
+                            &read_val!(FTN_TABLE4)
+                                .get(ipv4.octets())
+                                .unwrap()
+                                .dependent_ftn_down_list,
+                        ) && list_is_empty(
+                            &read_val!(FTN_TABLE4)
+                                .get(ipv4.octets())
+                                .unwrap()
+                                .dependent_ilm_down_list,
                         ) {
                             write_val!(FTN_TABLE4).remove(ipv4.octets());
                         }
@@ -218,12 +438,30 @@ impl FtnTableGen {
             FtnTableGen::V6(_) => match key {
                 FtnKey::IP(key_ip) => match key_ip.prefix {
                     IpAddr::V6(ipv6) => {
-                        FtnTableGen::remove_from_list(
-                            write_val!(FTN_TABLE6).get_mut(ipv6.octets()).unwrap(),
+                        let removed_ftn = FtnTableGen::remove_from_list(
+                            &mut write_val!(FTN_TABLE6)
+                                .get_mut(ipv6.octets())
+                                .unwrap()
+                                .ftn_list,
                             ftn_ix,
                         );
-                        if FtnTableGen::list_is_empty(
-                            read_val!(FTN_TABLE6).get(ipv6.octets()).unwrap(),
+                        if removed_ftn.is_some() {
+                            let removed_ftn_unwarp = Arc::clone(&removed_ftn.unwrap());
+                            write_val!(removed_ftn_unwarp).clean_ftn_up_list();
+                            write_val!(removed_ftn_unwarp).clean_ilm_up_list();
+                        }
+                        if list_is_empty(
+                            &read_val!(FTN_TABLE6).get(ipv6.octets()).unwrap().ftn_list,
+                        ) && list_is_empty(
+                            &read_val!(FTN_TABLE6)
+                                .get(ipv6.octets())
+                                .unwrap()
+                                .dependent_ftn_down_list,
+                        ) && list_is_empty(
+                            &read_val!(FTN_TABLE6)
+                                .get(ipv6.octets())
+                                .unwrap()
+                                .dependent_ilm_down_list,
                         ) {
                             write_val!(FTN_TABLE6).remove(ipv6.octets());
                         }
@@ -355,14 +593,64 @@ pub struct FtnEntry {
     fec: IpAddr,
     ftn_ix: u32,
     xc_list: XcList,
+    is_dependent: bool,
+    dependent_ftn_up_list: FtnList,
+    dependent_ilm_up_list: IlmList,
+    state: bool,
 }
 
 impl FtnEntry {
-    fn new(fec: IpAddr, idx: u32) -> FtnEntry {
+    fn new(fec: IpAddr, idx: u32, dependent: bool) -> FtnEntry {
         FtnEntry {
             fec: fec,
             ftn_ix: idx,
             xc_list: Vec::new(),
+            is_dependent: dependent,
+            dependent_ftn_up_list: Vec::new(),
+            dependent_ilm_up_list: Vec::new(),
+            state: false,
+        }
+    }
+    fn up(&mut self) {
+        self.state = true;
+    }
+    fn down(&mut self) {
+        self.state = false;
+        self.clean_ftn_up_list();
+        self.clean_ilm_up_list();
+    }
+    fn add_to_ftn_up_list(&mut self, dep_ftn: FtnEntryWrapped) {
+        write_val!(dep_ftn).up();
+        self.dependent_ftn_up_list.push(dep_ftn);
+    }
+    fn add_to_ilm_up_list(&mut self, dep_ilm: IlmEntryWrapped) {
+        write_val!(dep_ilm).up();
+        self.dependent_ilm_up_list.push(dep_ilm);
+    }
+    fn clean_ftn_up_list(&mut self) {
+        loop {
+            match self.dependent_ftn_up_list.pop() {
+                Some(dep_ftn) => {
+                    write_val!(dep_ftn).down();
+                    FtnTableGen::process_ftn_dependent_entry(&dep_ftn, &self.fec);
+                }
+                None => {
+                    break;
+                }
+            }
+        }
+    }
+    fn clean_ilm_up_list(&mut self) {
+        loop {
+            match self.dependent_ilm_up_list.pop() {
+                Some(dep_ilm) => {
+                    write_val!(dep_ilm).down();
+                    FtnTableGen::process_ilm_dependent_entry(dep_ilm, &self.fec);
+                }
+                None => {
+                    break;
+                }
+            }
         }
     }
 }
@@ -511,6 +799,7 @@ pub struct IlmEntry {
     ilm_ix: u32,
     xc_list: XcList,
     owner: u32,
+    state: bool,
 }
 
 impl IlmEntry {
@@ -520,7 +809,14 @@ impl IlmEntry {
             ilm_ix: ilm_ix,
             xc_list: Vec::new(),
             owner: owner,
+            state: false,
         }
+    }
+    fn up(&mut self) {
+        self.state = true;
+    }
+    fn down(&mut self) {
+        self.state = false;
     }
 }
 
@@ -567,9 +863,6 @@ impl IlmTableGen {
         }
         None
     }
-    fn insert_list(ilm_list: &mut IlmList, ilm_entry: IlmEntryWrapped) {
-        ilm_list.push(ilm_entry);
-    }
     fn insert(&mut self, ilm_key: IlmKey, ilm_entry: IlmEntryWrapped) {
         trace!("IlmTableGen::insert");
         if !read_val!(&ILM_TABLE).contains_key(&ilm_key) {
@@ -580,7 +873,7 @@ impl IlmTableGen {
         trace!("insetion to list");
         match write_val!(&ILM_TABLE).get_mut(&ilm_key) {
             Some(ll) => {
-                IlmTableGen::insert_list(ll, ilm_entry);
+                insert_list(ll, ilm_entry);
             }
             None => {
                 trace!("expected to find linked list on key {:?}", ilm_key);
@@ -776,10 +1069,28 @@ fn _ftn_add(ftn_add_data_int: &FtnAddDataInt) -> i32 {
             return -1;
         }
     }
-
+    let mut is_dependent: bool = false;
+    match ftn_add_data_int.next_hop {
+        IpAddr::V4(_) => match NhTableGen::V4(&NH_TABLE4).lookup(ftn_add_data_int.next_hop) {
+            Ok(_) => {}
+            Err(_) => {
+                is_dependent = true;
+            }
+        },
+        IpAddr::V6(_) => match NhTableGen::V6(&NH_TABLE6).lookup(ftn_add_data_int.next_hop) {
+            Ok(_) => {}
+            Err(_) => {
+                is_dependent = true;
+            }
+        },
+    }
+    trace!("FTN entry is dependent {}", is_dependent);
     let ftn_entry: FtnEntryWrapped = Arc::new(ReentrantMutex::new(RefCell::new(Box::new(
-        FtnEntry::new(ftn_add_data_int.fec, ftn_add_data_int.ftn_ix),
+        FtnEntry::new(ftn_add_data_int.fec, ftn_add_data_int.ftn_ix, is_dependent),
     ))));
+    if !is_dependent {
+        write_val!(ftn_entry).up();
+    }
     write_val!(ftn_entry).add_xc_entry(xc_entry);
     match ftn_add_data_int.fec {
         IpAddr::V4(_) => {
@@ -1143,4 +1454,39 @@ pub extern "C" fn ilm_del(ilm_del_data: *mut IlmDelData) -> i32 {
         }
     }
     _ilm_del(&ilm_del_int)
+}
+
+#[no_mangle]
+pub extern "C" fn nh_add_del(nh_add_del_data: *mut NhAddDel) -> i32 {
+    let addr: IpAddr;
+    let ifindex: u32;
+    let is_add: bool;
+    trace!("nh_add_del");
+    unsafe {
+        let mut addr_ptr: *mut u8 = (*nh_add_del_data).addr.addr;
+        if (*nh_add_del_data).addr.family == 1 {
+            addr = copy_ip_addr_v4_from_user(addr_ptr);
+        } else {
+            addr = copy_ip_addr_v6_from_user(addr_ptr as *mut u16);
+        }
+        ifindex = (*nh_add_del_data).ifindex;
+        is_add = (*nh_add_del_data).is_add;
+    }
+    match addr {
+        IpAddr::V4(_) => {
+            if is_add {
+                NhTableGen::V4(&NH_TABLE4).insert(addr, ifindex);
+            } else {
+                NhTableGen::V4(&NH_TABLE4).remove(addr);
+            }
+        }
+        IpAddr::V6(_) => {
+            if is_add {
+                NhTableGen::V6(&NH_TABLE6).insert(addr, ifindex);
+            } else {
+                NhTableGen::V6(&NH_TABLE6).remove(addr);
+            }
+        }
+    }
+    0
 }

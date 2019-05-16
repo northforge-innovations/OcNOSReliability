@@ -66,3 +66,11 @@ pub struct FtnDelData {
     pub fec: IpAddrC,
     pub ftn_ix: u32,
 }
+
+#[repr(C)]
+#[allow(dead_code)]
+pub struct NhAddDel {
+    pub addr: IpAddrC,
+    pub ifindex: u32,
+    pub is_add: bool,
+}
