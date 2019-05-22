@@ -7,7 +7,6 @@ Implementation of the safe data storage in RUST PoC project
 	- Demonstrate built-in unit testing
 
 -Description
-	This PoC consists of:
 	- RUST library which in turn consists of:
 		- Emulated storage of a protocol peers
 			- Each element has its routing table whose elements are also present in the global routing table
