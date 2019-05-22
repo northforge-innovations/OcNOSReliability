@@ -1,12 +1,12 @@
 Implementation of the safe data storage in RUST PoC project
 
 - Objectives
-	- Demonstrate ability to store and manipulate data while having at least the same abilities as provided by C
-	- Demonstrate C & RUST interoperability by being able to link together and call C->RUST->C
-	- Emulate (although simplified) real NSM subsystem
-	- Demonstrate built-in unit testing
+	* Demonstrate ability to store and manipulate data while having at least the same abilities as provided by C
+	* Demonstrate C & RUST interoperability by being able to link together and call C->RUST->C
+	* Emulate (although simplified) real NSM subsystem
+	* Demonstrate built-in unit testing
 -Description
-	- RUST library which in turn consists of:
+	* RUST library which in turn consists of:
 		- Emulated storage of a protocol peers
 			- Each element has its routing table whose elements are also present in the global routing table
 		- Global routing table whose entries
