@@ -25,9 +25,9 @@ Implementation of the safe data storage in RUST PoC project
 			- Using destructor-like behavior is demonstrated (via Drop trait)
 
 - How to build and run unittests
-	To build, run ./build.sh from the project  root. It will build both RUST and C code and run unit tests, if the build was successful
+	* To build, run ./build.sh from the project  root. It will build both RUST and C code and run unit tests, if the build was successful
 
 - How to run
-	./run.sh from the project root
+	* ./run.sh from the project root
 
 		
