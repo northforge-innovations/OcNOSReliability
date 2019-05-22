@@ -97,71 +97,88 @@ pub enum NhTableGen {
     V6(&'static NH_TABLE6),
 }
 
+macro_rules! nhtable_insert_version {
+    ($IpVerGood:path, $IpVerBad:path, $key:ident, $entry:ident, $table:ident) => {
+        match $key {
+            $IpVerGood(ipv) => {
+                write_val!(&$table).insert(ipv.octets(), $entry);
+            }
+            $IpVerBad(_) => {
+                trace!("IPvX is unexpected here");
+            }
+        }
+    };
+}
+
+macro_rules! nhtable_insert {
+    ($self:ident, $key:ident, $entry:ident) => {
+        match $self {
+            NhTableGen::V4(_) => {
+                nhtable_insert_version!(IpAddr::V4, IpAddr::V6, $key, $entry, NH_TABLE4)
+            }
+            NhTableGen::V6(_) => {
+                nhtable_insert_version!(IpAddr::V6, IpAddr::V4, $key, $entry, NH_TABLE6)
+            }
+        }
+    };
+}
+
+macro_rules! nhtable_lookup_version {
+    ($IpVerGood:path, $IpVerBad:path, $key:ident, $table:ident) => {
+        match $key {
+            $IpVerGood(ipv) => {
+                if read_val!(&$table).contains_key(ipv.octets()) {
+                    return Ok(*read_val!(&$table).get(ipv.octets()).unwrap());
+                }
+            }
+            $IpVerBad(_) => {
+                trace!("IPVx is unexpected here");
+            }
+        }
+    };
+}
+
+macro_rules! nhtable_lookup {
+    ($self:ident, $key:ident) => {
+        match $self {
+            NhTableGen::V4(_) => nhtable_lookup_version!(IpAddr::V4, IpAddr::V6, $key, NH_TABLE4),
+            NhTableGen::V6(_) => nhtable_lookup_version!(IpAddr::V6, IpAddr::V4, $key, NH_TABLE6),
+        }
+    };
+}
+
+macro_rules! nhtable_remove_version {
+    ($IpVerGood:path, $IpVerBad:path, $key:ident, $table:ident) => {
+        match $key {
+            $IpVerGood(ipv) => {
+                write_val!(&$table).remove(ipv.octets());
+            }
+            $IpVerBad(_) => {
+                trace!("IPVx is unexpected here");
+            }
+        }
+    };
+}
+
+macro_rules! nhtable_remove {
+    ($self:ident, $key:ident) => {
+        match $self {
+            NhTableGen::V4(_) => nhtable_remove_version!(IpAddr::V4, IpAddr::V6, $key, NH_TABLE4),
+            NhTableGen::V6(_) => nhtable_remove_version!(IpAddr::V6, IpAddr::V4, $key, NH_TABLE6),
+        }
+    };
+}
+
 impl NhTableGen {
     fn insert(&self, key: IpAddr, entry: u32) {
-        match self {
-            NhTableGen::V4(_) => match key {
-                IpAddr::V4(ipv4) => {
-                    write_val!(&NH_TABLE4).insert(ipv4.octets(), entry);
-                }
-                IpAddr::V6(_) => {
-                    trace!("IPv6 is unexpected here");
-                }
-            },
-            NhTableGen::V6(_) => match key {
-                IpAddr::V6(ipv6) => {
-                    write_val!(&NH_TABLE6).insert(ipv6.octets(), entry);
-                }
-                IpAddr::V4(_) => {
-                    trace!("IPV4 is unexpected here");
-                }
-            },
-        }
+        nhtable_insert!(self, key, entry);
     }
     fn lookup(&self, key: IpAddr) -> Result<u32, i32> {
-        match self {
-            NhTableGen::V4(_) => match key {
-                IpAddr::V4(ipv4) => {
-                    if read_val!(&NH_TABLE4).contains_key(ipv4.octets()) {
-                        return Ok(*read_val!(&NH_TABLE4).get(ipv4.octets()).unwrap());
-                    }
-                }
-                IpAddr::V6(_) => {
-                    trace!("IPV6 is unexpected here");
-                }
-            },
-            NhTableGen::V6(_) => match key {
-                IpAddr::V6(ipv6) => {
-                    if read_val!(&NH_TABLE6).contains_key(ipv6.octets()) {
-                        return Ok(*read_val!(&NH_TABLE6).get(ipv6.octets()).unwrap());
-                    }
-                }
-                IpAddr::V4(_) => {
-                    trace!("IPV4 is unexpected here");
-                }
-            },
-        }
+        nhtable_lookup!(self, key);
         Err(-1)
     }
     fn remove(&self, key: IpAddr) {
-        match self {
-            NhTableGen::V4(_) => match key {
-                IpAddr::V4(ipv4) => {
-                    write_val!(&NH_TABLE4).remove(ipv4.octets());
-                }
-                IpAddr::V6(_) => {
-                    trace!("IPv6 is unexpected here");
-                }
-            },
-            NhTableGen::V6(_) => match key {
-                IpAddr::V6(ipv6) => {
-                    write_val!(&NH_TABLE6).remove(ipv6.octets());
-                }
-                IpAddr::V4(_) => {
-                    trace!("IPv4 is unexpected here");
-                }
-            },
-        }
+        nhtable_remove!(self, key);
     }
 }
 
@@ -177,6 +194,175 @@ fn insert_list<E>(list: &mut Vec<E>, entry: E) {
 fn list_is_empty<E>(list: &Vec<E>) -> bool {
     trace!("list_is_empty");
     list.len() == 0
+}
+
+macro_rules! process_dependent_entry_version {
+    ($add_up_list:ident, $down_list:ident, $entry:ident, $ftn_table:ident, $ipv:ident) => {
+        if read_val!($ftn_table).contains_key($ipv.octets()) {
+            match FtnTableGen::lookup_list(
+                &read_val!($ftn_table).get($ipv.octets()).unwrap().ftn_list,
+                &|ie| true == read_val!(ie).state,
+            ) {
+                Some(parent_ftn) => {
+                    write_val!(parent_ftn).$add_up_list(Arc::clone(&$entry));
+                }
+                None => {
+                    insert_list(
+                        &mut write_val!($ftn_table)
+                            .get_mut($ipv.octets())
+                            .unwrap()
+                            .$down_list,
+                        Arc::clone(&$entry),
+                    );
+                }
+            }
+        }
+    };
+}
+
+macro_rules! process_dependent_entry {
+    ($add_up_list:ident, $down_list:ident, $self:ident, $fec:ident, $entry:ident) => {
+        match $self.$fec {
+            IpAddr::V4(ipv) => {
+                process_dependent_entry_version!($add_up_list, $down_list, $entry, FTN_TABLE4, ipv)
+            }
+            IpAddr::V6(ipv) => {
+                process_dependent_entry_version!($add_up_list, $down_list, $entry, FTN_TABLE6, ipv)
+            }
+        }
+    };
+}
+
+macro_rules! ftn_table_gen_lookup_version {
+    ($IpVerGood:path, $IpVerBad:path, $key:ident, $ftn_ix:ident, $table:ident) => {
+        match $key {
+                FtnKey::IP(key_ip) => match key_ip.prefix {
+                    $IpVerGood(ipv) => {
+                        if read_val!($table).contains_key(ipv.octets()) {
+                            return FtnTableGen::lookup_list(
+                                &read_val!($table).get(ipv.octets()).unwrap().ftn_list,
+                                &|ie| $ftn_ix == read_val!(ie).ftn_ix,
+                            );
+                        }
+                    }
+                    $IpVerBad(_) => {
+                        trace!("IPvx is not expected here!");
+                    }
+                },
+            }
+    };
+}
+
+macro_rules! ftn_table_gen_lookup {
+    ($self:ident, $key:ident, $ftn_ix:ident) => {
+        match $self {
+            FtnTableGen::V4(_) => {
+                ftn_table_gen_lookup_version!(IpAddr::V4, IpAddr::V6, $key, $ftn_ix, FTN_TABLE4);
+            }
+            FtnTableGen::V6(_) => {
+                ftn_table_gen_lookup_version!(IpAddr::V4, IpAddr::V6, $key, $ftn_ix, FTN_TABLE4);
+            }
+        }
+    };
+}
+
+macro_rules! ftn_table_gen_insert_version {
+    ($IpVerGood:path, $IpVerBad:path, $key:ident, $entry:ident, $table:ident) => {
+        match $key {
+                FtnKey::IP(key_ip) => match key_ip.prefix {
+                    $IpVerGood(ipv) => {
+                        if !read_val!($table).contains_key(ipv.octets()) {
+                            trace!("not found, create new");
+                            write_val!($table).insert(
+                                ipv.octets(),
+                                FecEntry {
+                                    ftn_list: Vec::new(),
+                                    dependent_ftn_down_list: Vec::new(),
+                                    dependent_ilm_down_list: Vec::new(),
+                                },
+                            );
+                        }
+                        insert_list(
+                            &mut write_val!($table)
+                                .get_mut(ipv.octets())
+                                .unwrap()
+                                .ftn_list,
+                            $entry,
+                        );
+                    }
+                    $IpVerBad(_) => {
+                        trace!("IPvx is not expected here!");
+                    }
+                },
+            }
+    };
+}
+
+macro_rules! ftn_table_gen_insert {
+    ($self:ident, $key:ident, $entry:ident) => {
+        match $self {
+            FtnTableGen::V4(_) => {
+                ftn_table_gen_insert_version!(IpAddr::V4, IpAddr::V6, $key, $entry, FTN_TABLE4);
+            }
+            FtnTableGen::V6(_) => {
+                ftn_table_gen_insert_version!(IpAddr::V4, IpAddr::V6, $key, $entry, FTN_TABLE4);
+            }
+        }
+    };
+}
+
+macro_rules! ftn_table_gen_remove_version {
+    ($IpVerGood:path, $IpVerBad:path, $key:ident, $ftn_ix:ident, $table:ident) => {
+        match $key {
+                FtnKey::IP(key_ip) => match key_ip.prefix {
+                    $IpVerGood(ipv) => {
+                        let removed_ftn = FtnTableGen::remove_from_list(
+                            &mut write_val!($table)
+                                .get_mut(ipv.octets())
+                                .unwrap()
+                                .ftn_list,
+                            $ftn_ix,
+                        );
+                        if removed_ftn.is_some() {
+                            let removed_ftn_unwarp = Arc::clone(&removed_ftn.unwrap());
+                            write_val!(removed_ftn_unwarp).clean_ftn_up_list();
+                            write_val!(removed_ftn_unwarp).clean_ilm_up_list();
+                        }
+                        if list_is_empty(
+                            &read_val!($table).get(ipv.octets()).unwrap().ftn_list,
+                        ) && list_is_empty(
+                            &read_val!($table)
+                                .get(ipv.octets())
+                                .unwrap()
+                                .dependent_ftn_down_list,
+                        ) && list_is_empty(
+                            &read_val!($table)
+                                .get(ipv.octets())
+                                .unwrap()
+                                .dependent_ilm_down_list,
+                        ) {
+                            write_val!($table).remove(ipv.octets());
+                        }
+                    }
+                    $IpVerBad(_) => {
+                        trace!("IPvx is not expected here!");
+                    }
+                },
+            }
+    };
+}
+
+macro_rules! ftn_table_gen_remove {
+    ($self:ident, $key:ident, $ftn_ix:ident) => {
+        match $self {
+            FtnTableGen::V4(_) => {
+                ftn_table_gen_remove_version!(IpAddr::V4, IpAddr::V6, $key, $ftn_ix, FTN_TABLE4);
+            }
+            FtnTableGen::V6(_) => {
+                ftn_table_gen_remove_version!(IpAddr::V4, IpAddr::V6, $key, $ftn_ix, FTN_TABLE4);
+            }
+        }
+    };
 }
 
 impl FtnTableGen {
@@ -211,267 +397,16 @@ impl FtnTableGen {
     }
     fn lookup(&self, key: &FtnKey, ftn_ix: u32) -> Option<FtnEntryWrapped> {
         trace!("FtnTableGen::lookup");
-        match self {
-            FtnTableGen::V4(_) => match key {
-                FtnKey::IP(key_ip) => match key_ip.prefix {
-                    IpAddr::V4(ipv4) => {
-                        if read_val!(FTN_TABLE4).contains_key(ipv4.octets()) {
-                            return FtnTableGen::lookup_list(
-                                &read_val!(FTN_TABLE4).get(ipv4.octets()).unwrap().ftn_list,
-                                &|ie| ftn_ix == read_val!(ie).ftn_ix,
-                            );
-                        }
-                    }
-                    IpAddr::V6(_) => {
-                        trace!("IPv6 is not expected here!");
-                    }
-                },
-            },
-            FtnTableGen::V6(_) => match key {
-                FtnKey::IP(key_ip) => match key_ip.prefix {
-                    IpAddr::V6(ipv6) => {
-                        if read_val!(FTN_TABLE6).contains_key(ipv6.octets()) {
-                            return FtnTableGen::lookup_list(
-                                &read_val!(FTN_TABLE6).get(ipv6.octets()).unwrap().ftn_list,
-                                &|ie| ftn_ix == read_val!(ie).ftn_ix,
-                            );
-                        }
-                    }
-                    IpAddr::V4(_) => {
-                        trace!("IPv4 is not expected here!");
-                    }
-                },
-            },
-        }
+        ftn_table_gen_lookup!(self, key, ftn_ix);
         None
     }
     fn insert(&self, key: FtnKey, entry: FtnEntryWrapped) {
         trace!("FtnTableGen::insert");
-        match self {
-            FtnTableGen::V4(_) => match key {
-                FtnKey::IP(key_ip) => match key_ip.prefix {
-                    IpAddr::V4(ipv4) => {
-                        if !read_val!(FTN_TABLE4).contains_key(ipv4.octets()) {
-                            trace!("not found, create new");
-                            write_val!(FTN_TABLE4).insert(
-                                ipv4.octets(),
-                                FecEntry {
-                                    ftn_list: Vec::new(),
-                                    dependent_ftn_down_list: Vec::new(),
-                                    dependent_ilm_down_list: Vec::new(),
-                                },
-                            );
-                        }
-                        insert_list(
-                            &mut write_val!(FTN_TABLE4)
-                                .get_mut(ipv4.octets())
-                                .unwrap()
-                                .ftn_list,
-                            entry,
-                        );
-                    }
-                    IpAddr::V6(_) => {
-                        trace!("IPv6 is not expected here!");
-                    }
-                },
-            },
-            FtnTableGen::V6(_) => match key {
-                FtnKey::IP(key_ip) => match key_ip.prefix {
-                    IpAddr::V6(ipv6) => {
-                        if !read_val!(FTN_TABLE6).contains_key(ipv6.octets()) {
-                            trace!("not found, create new");
-                            write_val!(FTN_TABLE6).insert(
-                                ipv6.octets(),
-                                FecEntry {
-                                    ftn_list: Vec::new(),
-                                    dependent_ftn_down_list: Vec::new(),
-                                    dependent_ilm_down_list: Vec::new(),
-                                },
-                            );
-                        }
-                        insert_list(
-                            &mut write_val!(FTN_TABLE6)
-                                .get_mut(ipv6.octets())
-                                .unwrap()
-                                .ftn_list,
-                            entry,
-                        );
-                    }
-                    IpAddr::V4(_) => {
-                        trace!("IPv4 is not expected here!");
-                    }
-                },
-            },
-        }
-    }
-    fn process_ftn_dependent_entry(dep_ftn: &FtnEntryWrapped, fec: &IpAddr) {
-        match fec {
-            IpAddr::V4(ipv4) => {
-                if read_val!(FTN_TABLE4).contains_key(ipv4.octets()) {
-                    match FtnTableGen::lookup_list(
-                        &read_val!(FTN_TABLE4).get(ipv4.octets()).unwrap().ftn_list,
-                        &|ie| true == read_val!(ie).state,
-                    ) {
-                        Some(parent_ftn) => {
-                            write_val!(parent_ftn).add_to_ftn_up_list(Arc::clone(dep_ftn));
-                        }
-                        None => {
-                            insert_list(
-                                &mut write_val!(FTN_TABLE4)
-                                    .get_mut(ipv4.octets())
-                                    .unwrap()
-                                    .dependent_ftn_down_list,
-                                Arc::clone(&dep_ftn),
-                            );
-                        }
-                    }
-                }
-            }
-            IpAddr::V6(ipv6) => {
-                if read_val!(FTN_TABLE6).contains_key(ipv6.octets()) {
-                    match FtnTableGen::lookup_list(
-                        &read_val!(FTN_TABLE6).get(ipv6.octets()).unwrap().ftn_list,
-                        &|ie| true == read_val!(ie).state,
-                    ) {
-                        Some(parent_ftn) => {
-                            write_val!(parent_ftn).add_to_ftn_up_list(Arc::clone(&dep_ftn));
-                        }
-                        None => {
-                            insert_list(
-                                &mut write_val!(FTN_TABLE6)
-                                    .get_mut(ipv6.octets())
-                                    .unwrap()
-                                    .dependent_ftn_down_list,
-                                Arc::clone(&dep_ftn),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-    fn process_ilm_dependent_entry(dep_ilm: IlmEntryWrapped, fec: &IpAddr) {
-        match fec {
-            IpAddr::V4(ipv4) => {
-                if read_val!(FTN_TABLE4).contains_key(ipv4.octets()) {
-                    match FtnTableGen::lookup_list(
-                        &read_val!(FTN_TABLE4).get(ipv4.octets()).unwrap().ftn_list,
-                        &|ie| true == read_val!(ie).state,
-                    ) {
-                        Some(parent_ilm) => {
-                            write_val!(parent_ilm).add_to_ilm_up_list(Arc::clone(&dep_ilm));
-                        }
-                        None => {
-                            insert_list(
-                                &mut write_val!(FTN_TABLE4)
-                                    .get_mut(ipv4.octets())
-                                    .unwrap()
-                                    .dependent_ilm_down_list,
-                                Arc::clone(&dep_ilm),
-                            );
-                        }
-                    }
-                }
-            }
-            IpAddr::V6(ipv6) => {
-                if read_val!(FTN_TABLE6).contains_key(ipv6.octets()) {
-                    match FtnTableGen::lookup_list(
-                        &read_val!(FTN_TABLE6).get(ipv6.octets()).unwrap().ftn_list,
-                        &|ie| true == read_val!(ie).state,
-                    ) {
-                        Some(parent_ilm) => {
-                            write_val!(parent_ilm).add_to_ilm_up_list(Arc::clone(&dep_ilm));
-                        }
-                        None => {
-                            insert_list(
-                                &mut write_val!(FTN_TABLE6)
-                                    .get_mut(ipv6.octets())
-                                    .unwrap()
-                                    .dependent_ilm_down_list,
-                                Arc::clone(&dep_ilm),
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        ftn_table_gen_insert!(self, key, entry);
     }
     fn remove(&self, key: &FtnKey, ftn_ix: u32) {
         trace!("FtnTableGen::remove");
-        match self {
-            FtnTableGen::V4(_) => match key {
-                FtnKey::IP(key_ip) => match key_ip.prefix {
-                    IpAddr::V4(ipv4) => {
-                        let removed_ftn = FtnTableGen::remove_from_list(
-                            &mut write_val!(FTN_TABLE4)
-                                .get_mut(ipv4.octets())
-                                .unwrap()
-                                .ftn_list,
-                            ftn_ix,
-                        );
-                        if removed_ftn.is_some() {
-                            let removed_ftn_unwarp = Arc::clone(&removed_ftn.unwrap());
-                            write_val!(removed_ftn_unwarp).clean_ftn_up_list();
-                            write_val!(removed_ftn_unwarp).clean_ilm_up_list();
-                        }
-                        if list_is_empty(
-                            &read_val!(FTN_TABLE4).get(ipv4.octets()).unwrap().ftn_list,
-                        ) && list_is_empty(
-                            &read_val!(FTN_TABLE4)
-                                .get(ipv4.octets())
-                                .unwrap()
-                                .dependent_ftn_down_list,
-                        ) && list_is_empty(
-                            &read_val!(FTN_TABLE4)
-                                .get(ipv4.octets())
-                                .unwrap()
-                                .dependent_ilm_down_list,
-                        ) {
-                            write_val!(FTN_TABLE4).remove(ipv4.octets());
-                        }
-                    }
-                    IpAddr::V6(_) => {
-                        trace!("IPv6 is not expected here!");
-                    }
-                },
-            },
-            FtnTableGen::V6(_) => match key {
-                FtnKey::IP(key_ip) => match key_ip.prefix {
-                    IpAddr::V6(ipv6) => {
-                        let removed_ftn = FtnTableGen::remove_from_list(
-                            &mut write_val!(FTN_TABLE6)
-                                .get_mut(ipv6.octets())
-                                .unwrap()
-                                .ftn_list,
-                            ftn_ix,
-                        );
-                        if removed_ftn.is_some() {
-                            let removed_ftn_unwarp = Arc::clone(&removed_ftn.unwrap());
-                            write_val!(removed_ftn_unwarp).clean_ftn_up_list();
-                            write_val!(removed_ftn_unwarp).clean_ilm_up_list();
-                        }
-                        if list_is_empty(
-                            &read_val!(FTN_TABLE6).get(ipv6.octets()).unwrap().ftn_list,
-                        ) && list_is_empty(
-                            &read_val!(FTN_TABLE6)
-                                .get(ipv6.octets())
-                                .unwrap()
-                                .dependent_ftn_down_list,
-                        ) && list_is_empty(
-                            &read_val!(FTN_TABLE6)
-                                .get(ipv6.octets())
-                                .unwrap()
-                                .dependent_ilm_down_list,
-                        ) {
-                            write_val!(FTN_TABLE6).remove(ipv6.octets());
-                        }
-                    }
-                    IpAddr::V4(_) => {
-                        trace!("IPv4 is not expected here!");
-                    }
-                },
-            },
-        }
+        ftn_table_gen_remove!(self, key, ftn_ix);
     }
 }
 
@@ -599,6 +534,28 @@ pub struct FtnEntry {
     state: bool,
 }
 
+macro_rules! clear_entry_list {
+    ($self:ident, $up_list:ident, $down_list:ident, $add_up_list:ident) => {
+        loop {
+            match $self.$up_list.pop() {
+                Some(dep_ftn) => {
+                    write_val!(dep_ftn).down();
+                    process_dependent_entry!(
+                        $add_up_list,
+                        $down_list,
+                        $self,
+                        fec,
+                        dep_ftn
+                    );
+                }
+                None => {
+                    break;
+                }
+            }
+        }
+    }
+}
+
 impl FtnEntry {
     fn new(fec: IpAddr, idx: u32, dependent: bool) -> FtnEntry {
         FtnEntry {
@@ -628,30 +585,10 @@ impl FtnEntry {
         self.dependent_ilm_up_list.push(dep_ilm);
     }
     fn clean_ftn_up_list(&mut self) {
-        loop {
-            match self.dependent_ftn_up_list.pop() {
-                Some(dep_ftn) => {
-                    write_val!(dep_ftn).down();
-                    FtnTableGen::process_ftn_dependent_entry(&dep_ftn, &self.fec);
-                }
-                None => {
-                    break;
-                }
-            }
-        }
+        clear_entry_list!(self, dependent_ftn_up_list, dependent_ftn_down_list, add_to_ftn_up_list);
     }
     fn clean_ilm_up_list(&mut self) {
-        loop {
-            match self.dependent_ilm_up_list.pop() {
-                Some(dep_ilm) => {
-                    write_val!(dep_ilm).down();
-                    FtnTableGen::process_ilm_dependent_entry(dep_ilm, &self.fec);
-                }
-                None => {
-                    break;
-                }
-            }
-        }
+        clear_entry_list!(self, dependent_ilm_up_list, dependent_ilm_down_list, add_to_ilm_up_list);
     }
 }
 
