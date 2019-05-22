@@ -5,7 +5,6 @@ Implementation of the safe data storage in RUST PoC project
 	- Demonstrate C & RUST interoperability by being able to link together and call C->RUST->C
 	- Emulate (although simplified) real NSM subsystem
 	- Demonstrate built-in unit testing
-
 -Description
 	- RUST library which in turn consists of:
 		- Emulated storage of a protocol peers
