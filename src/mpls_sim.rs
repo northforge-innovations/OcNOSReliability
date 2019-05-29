@@ -2,6 +2,7 @@
 use parking_lot::ReentrantMutex;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 extern crate log;
@@ -26,16 +27,45 @@ type FtnList = Vec<FtnEntryWrapped>;
 type IlmList = Vec<IlmEntryWrapped>;
 pub struct FecEntry {
     ftn_list: FtnList,
-    dependent_ftn_down_list: FtnList,
-    dependent_ilm_down_list: IlmList,
 }
-type FtnTable = Arc<ReentrantMutex<RefCell<PatriciaMap<FecEntry>>>>;
+impl FecEntry {
+    fn new(ftn_list: FtnList) -> FecEntry {
+        FecEntry { ftn_list: ftn_list }
+    }
+}
+type FecEntryWrapped = Arc<ReentrantMutex<RefCell<Box<FecEntry>>>>;
+pub struct NhEvent {
+    nh_addr: IpAddr,
+    state: bool,
+}
+pub struct NhTableBase {
+    tree: PatriciaMap<NhEntryWrapped>,
+    events: VecDeque<NhEvent>,
+}
+pub struct NhEntry {
+    connected: bool,
+    physical: bool,
+    dependent_ftn_list: FtnList,
+    dependent_ilm_list: IlmList,
+}
+impl NhEntry {
+    fn new(connected: bool, physical: bool) -> NhEntry {
+        NhEntry {
+            connected: connected,
+            physical: physical,
+            dependent_ftn_list: Vec::new(),
+            dependent_ilm_list: Vec::new(),
+        }
+    }
+}
+type FtnTable = Arc<ReentrantMutex<RefCell<PatriciaMap<FecEntryWrapped>>>>;
 type IlmTable = Arc<ReentrantMutex<RefCell<HashMap<IlmKey, IlmList>>>>;
 type XcTable = Arc<ReentrantMutex<RefCell<HashMap<XcKey, XcEntryWrapped>>>>;
 type NhlfeEntryWrapped = Arc<ReentrantMutex<RefCell<Box<NhlfeEntry>>>>;
+type NhEntryWrapped = Arc<ReentrantMutex<RefCell<Box<NhEntry>>>>;
 type NhlfeTable = Arc<ReentrantMutex<RefCell<HashMap<NhlfeKey, NhlfeEntryWrapped>>>>;
 type IdTable = Arc<ReentrantMutex<RefCell<Box<IdMap>>>>;
-type NhTable = Arc<ReentrantMutex<RefCell<PatriciaMap<u32>>>>;
+type NhTable = Arc<ReentrantMutex<RefCell<NhTableBase>>>;
 
 lazy_static! {
     pub static ref FTN_TABLE4: FtnTable =
@@ -61,10 +91,14 @@ lazy_static! {
         Arc::new(ReentrantMutex::new(RefCell::new(Box::new(IdMap {
             ids: [false; 1024]
         }))));
-    pub static ref NH_TABLE4: NhTable =
-        Arc::new(ReentrantMutex::new(RefCell::new(PatriciaMap::new())));
-    pub static ref NH_TABLE6: NhTable =
-        Arc::new(ReentrantMutex::new(RefCell::new(PatriciaMap::new())));
+    pub static ref NH_TABLE4: NhTable = Arc::new(ReentrantMutex::new(RefCell::new(NhTableBase {
+        tree: PatriciaMap::new(),
+        events: VecDeque::new()
+    })));
+    pub static ref NH_TABLE6: NhTable = Arc::new(ReentrantMutex::new(RefCell::new(NhTableBase {
+        tree: PatriciaMap::new(),
+        events: VecDeque::new()
+    })));
 }
 
 pub struct IdMap {
@@ -79,7 +113,7 @@ impl IdMap {
                 self.ids[i] = true;
                 return (i + 1) as u32;
             }
-            i = i + 1;
+            i += 1;
         }
         0
     }
@@ -98,13 +132,13 @@ pub enum NhTableGen {
 }
 
 macro_rules! nhtable_insert_version {
-    ($IpVerGood:path, $IpVerBad:path, $key:ident, $entry:ident, $table:ident) => {
+    ($IpVerGood:path, $IpVerBad:path, $key:ident, $table:ident, $entry:ident) => {
         match $key {
             $IpVerGood(ipv) => {
-                write_val!(&$table).insert(ipv.octets(), $entry);
+                write_val!(&$table).tree.insert(ipv.octets(), $entry);
             }
             $IpVerBad(_) => {
-                trace!("IPvX is unexpected here");
+                trace!("wrong IPversion");
             }
         }
     };
@@ -114,10 +148,10 @@ macro_rules! nhtable_insert {
     ($self:ident, $key:ident, $entry:ident) => {
         match $self {
             NhTableGen::V4(_) => {
-                nhtable_insert_version!(IpAddr::V4, IpAddr::V6, $key, $entry, NH_TABLE4)
+                nhtable_insert_version!(IpAddr::V4, IpAddr::V6, $key, NH_TABLE4, $entry)
             }
             NhTableGen::V6(_) => {
-                nhtable_insert_version!(IpAddr::V6, IpAddr::V4, $key, $entry, NH_TABLE6)
+                nhtable_insert_version!(IpAddr::V6, IpAddr::V4, $key, NH_TABLE6, $entry)
             }
         }
     };
@@ -127,12 +161,14 @@ macro_rules! nhtable_lookup_version {
     ($IpVerGood:path, $IpVerBad:path, $key:ident, $table:ident) => {
         match $key {
             $IpVerGood(ipv) => {
-                if read_val!(&$table).contains_key(ipv.octets()) {
-                    return Ok(*read_val!(&$table).get(ipv.octets()).unwrap());
+                if read_val!(&$table).tree.contains_key(ipv.octets()) {
+                    return Ok(Arc::clone(
+                        read_val!($table).tree.get(ipv.octets()).unwrap(),
+                    ));
                 }
             }
             $IpVerBad(_) => {
-                trace!("IPVx is unexpected here");
+                trace!("wrong IPversion");
             }
         }
     };
@@ -151,10 +187,10 @@ macro_rules! nhtable_remove_version {
     ($IpVerGood:path, $IpVerBad:path, $key:ident, $table:ident) => {
         match $key {
             $IpVerGood(ipv) => {
-                write_val!(&$table).remove(ipv.octets());
+                write_val!(&$table).tree.remove(ipv.octets());
             }
             $IpVerBad(_) => {
-                trace!("IPVx is unexpected here");
+                trace!("wrong IPversion");
             }
         }
     };
@@ -169,16 +205,140 @@ macro_rules! nhtable_remove {
     };
 }
 
+macro_rules! bring_entry_up {
+    ($entry:expr, $nh_entry:expr) => {
+        let succeeded = read_val!($entry).try_up($nh_entry);
+        if succeeded {
+            {
+                write_val!($entry).up();
+            }
+            read_val!($entry).attach_to_parent();
+        } else {
+            {
+                write_val!($entry).down();
+            }
+            //read_val!($entry).detach_from_parent();
+        }
+    };
+}
+
+macro_rules! process_depdendents {
+    ($nh_entry:expr) => {
+        trace!("process_dependents");
+        let try_ftn_up = |e: &FtnEntryWrapped| {
+            trace!("bringing up FTN with FEC {}", read_val!(e).fec);
+            bring_entry_up!(e, $nh_entry);
+            false
+        };
+        let try_ilm_up = |e: &IlmEntryWrapped| {
+            bring_entry_up!(e, $nh_entry);
+            false
+        };
+        iterate_list(&read_val!($nh_entry).dependent_ftn_list, &try_ftn_up);
+        iterate_list(&read_val!($nh_entry).dependent_ilm_list, &try_ilm_up);
+    };
+}
+
+macro_rules! add_entry_to_list {
+    ($self:ident, $key:ident, $entry:expr, $type:ty, $ix:ident, $list:ident) => {
+        trace!("add_entry_to_list");
+        let mut exists: bool = false;
+        let mut check_if_entry_exists = |e: &$type| {
+            if read_val!(e).$ix == read_val!($entry).$ix {
+                exists = true;
+                return true;
+            }
+            false
+        };
+        match $self.lookup($key) {
+            Ok(nh_entry) => {
+                iterate_list_mut(&read_val!(nh_entry).$list, &mut check_if_entry_exists);
+                if exists {
+                    return;
+                }
+                insert_list(&mut write_val!(nh_entry).$list, $entry);
+            }
+            Err(_) => {}
+        }
+    };
+}
+
 impl NhTableGen {
-    fn insert(&self, key: IpAddr, entry: u32) {
-        nhtable_insert!(self, key, entry);
+    fn create_modify_entry(
+        &self,
+        key: IpAddr,
+        exists: bool,
+        physical: bool,
+    ) -> Option<NhEntryWrapped> {
+        trace!("NhTableGen::insert {} {}", key, exists);
+        let mut entry_to_return: Option<NhEntryWrapped> = None;
+        match NhTableGen::lookup(self, key) {
+            Ok(existing_entry) => {
+                write_val!(existing_entry).connected = exists;
+                write_val!(existing_entry).physical = physical;
+            }
+            Err(_) => {
+                let nh_entry: NhEntryWrapped = Arc::new(ReentrantMutex::new(RefCell::new(
+                    Box::new(NhEntry::new(exists, physical)),
+                )));
+                entry_to_return = Some(Arc::clone(&nh_entry));
+                nhtable_insert!(self, key, nh_entry);
+            }
+        }
+        match NhTableGen::lookup(self, key) {
+            Ok(existing_entry) => {
+                entry_to_return = Some(Arc::clone(&existing_entry));
+                process_depdendents!(&existing_entry);
+            }
+            Err(_) => {
+                trace!("cannot find nh entry, should not get here!");
+                return None;
+            }
+        }
+        entry_to_return
     }
-    fn lookup(&self, key: IpAddr) -> Result<u32, i32> {
+    fn lookup(&self, key: IpAddr) -> Result<NhEntryWrapped, i32> {
         nhtable_lookup!(self, key);
         Err(-1)
     }
+    fn add_ftn_entry_to_list(&mut self, key: IpAddr, entry: FtnEntryWrapped) {
+        add_entry_to_list!(self, key, entry, FtnEntryWrapped, ix, dependent_ftn_list);
+    }
+    fn add_ilm_entry_to_list(&mut self, key: IpAddr, entry: IlmEntryWrapped) {
+        add_entry_to_list!(self, key, entry, IlmEntryWrapped, ix, dependent_ilm_list);
+    }
     fn remove(&self, key: IpAddr) {
         nhtable_remove!(self, key);
+    }
+    fn enqueue(&mut self, nh_addr: IpAddr, state: bool) {
+        match self {
+            NhTableGen::V4(_) => write_val!(NH_TABLE4).events.push_back(NhEvent {
+                nh_addr: nh_addr,
+                state: state,
+            }),
+            NhTableGen::V6(_) => write_val!(NH_TABLE6).events.push_back(NhEvent {
+                nh_addr: nh_addr,
+                state: state,
+            }),
+        }
+    }
+    fn dequeue(&mut self) -> Option<NhEvent> {
+        match self {
+            NhTableGen::V4(_) => write_val!(NH_TABLE4).events.pop_front(),
+            NhTableGen::V6(_) => write_val!(NH_TABLE6).events.pop_front(),
+        }
+    }
+    fn process_events(&mut self) {
+        loop {
+            match self.dequeue() {
+                Some(ev) => {
+                    self.create_modify_entry(ev.nh_addr, ev.state, false);
+                }
+                None => {
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -195,72 +355,107 @@ fn list_is_empty<E>(list: &Vec<E>) -> bool {
     trace!("list_is_empty");
     list.len() == 0
 }
-
-macro_rules! process_dependent_entry_version {
-    ($add_up_list:ident, $down_list:ident, $entry:ident, $ftn_table:ident, $ipv:ident) => {
-        if read_val!($ftn_table).contains_key($ipv.octets()) {
-            match FtnTableGen::lookup_list(
-                &read_val!($ftn_table).get($ipv.octets()).unwrap().ftn_list,
-                &|ie| true == read_val!(ie).state,
-            ) {
-                Some(parent_ftn) => {
-                    write_val!(parent_ftn).$add_up_list(Arc::clone(&$entry));
-                }
-                None => {
-                    insert_list(
-                        &mut write_val!($ftn_table)
-                            .get_mut($ipv.octets())
-                            .unwrap()
-                            .$down_list,
-                        Arc::clone(&$entry),
-                    );
-                }
-            }
+fn iterate_list<E>(list: &Vec<E>, on_element: &Fn(&E) -> bool) {
+    trace!("iterate_list");
+    let mut i = 0;
+    let len = list.len();
+    while i < len {
+        if on_element(&list[i]) {
+            break;
         }
-    };
+        i += 1;
+    }
 }
 
-macro_rules! process_dependent_entry {
-    ($add_up_list:ident, $down_list:ident, $self:ident, $fec:ident, $entry:ident) => {
-        match $self.$fec {
-            IpAddr::V4(ipv) => {
-                process_dependent_entry_version!($add_up_list, $down_list, $entry, FTN_TABLE4, ipv)
-            }
-            IpAddr::V6(ipv) => {
-                process_dependent_entry_version!($add_up_list, $down_list, $entry, FTN_TABLE6, ipv)
-            }
+fn iterate_list_mut<E>(list: &Vec<E>, on_element: &mut FnMut(&E) -> bool) {
+    trace!("iterate_list");
+    let mut i = 0;
+    let len = list.len();
+    while i < len {
+        if on_element(&list[i]) {
+            break;
         }
-    };
+        i += 1;
+    }
+}
+
+fn iterate_ftn_list(
+    list: &Vec<FtnEntryWrapped>,
+    on_element: &Fn(&FtnEntryWrapped) -> bool,
+) -> Option<FtnEntryWrapped> {
+    trace!("iterate_list");
+    let mut i = 0;
+    let len = list.len();
+    while i < len {
+        if on_element(&list[i]) {
+            return Some(Arc::clone(&list[i]));
+        }
+        i += 1;
+    }
+    return None;
 }
 
 macro_rules! ftn_table_gen_lookup_version {
-    ($IpVerGood:path, $IpVerBad:path, $key:ident, $ftn_ix:ident, $table:ident) => {
+    ($IpVerGood:path, $IpVerBad:path, $key:ident, $ix:ident, $table:ident) => {
         match $key {
-                FtnKey::IP(key_ip) => match key_ip.prefix {
-                    $IpVerGood(ipv) => {
-                        if read_val!($table).contains_key(ipv.octets()) {
-                            return FtnTableGen::lookup_list(
-                                &read_val!($table).get(ipv.octets()).unwrap().ftn_list,
-                                &|ie| $ftn_ix == read_val!(ie).ftn_ix,
-                            );
-                        }
+            FtnKey::IP(key_ip) => match key_ip.prefix {
+                $IpVerGood(ipv) => {
+                    if read_val!($table).contains_key(ipv.octets()) {
+                        return iterate_ftn_list(
+                            &read_val!(read_val!($table).get(ipv.octets()).unwrap()).ftn_list,
+                            &|ie| $ix == read_val!(ie).ix,
+                        );
                     }
-                    $IpVerBad(_) => {
-                        trace!("IPvx is not expected here!");
-                    }
-                },
-            }
+                }
+                $IpVerBad(_) => {
+                    trace!("wrong IPversion");
+                }
+            },
+        }
     };
 }
 
 macro_rules! ftn_table_gen_lookup {
-    ($self:ident, $key:ident, $ftn_ix:ident) => {
+    ($self:ident, $key:ident, $ix:ident) => {
         match $self {
             FtnTableGen::V4(_) => {
-                ftn_table_gen_lookup_version!(IpAddr::V4, IpAddr::V6, $key, $ftn_ix, FTN_TABLE4);
+                ftn_table_gen_lookup_version!(IpAddr::V4, IpAddr::V6, $key, $ix, FTN_TABLE4);
             }
             FtnTableGen::V6(_) => {
-                ftn_table_gen_lookup_version!(IpAddr::V4, IpAddr::V6, $key, $ftn_ix, FTN_TABLE4);
+                ftn_table_gen_lookup_version!(IpAddr::V4, IpAddr::V6, $key, $ix, FTN_TABLE4);
+            }
+        }
+    };
+}
+
+macro_rules! ftn_table_gen_lookup_fec_version {
+    ($IpVerGood:path, $IpVerBad:path, $key:ident, $table:ident) => {
+        match $key {
+            FtnKey::IP(key_ip) => match key_ip.prefix {
+                $IpVerGood(ipv) => {
+                    if read_val!($table).contains_key(ipv.octets()) {
+                        return iterate_ftn_list(
+                            &read_val!(read_val!($table).get(ipv.octets()).unwrap()).ftn_list,
+                            &|ie| read_val!(ie).is_up(),
+                        );
+                    }
+                }
+                $IpVerBad(_) => {
+                    trace!("wrong IPversion");
+                }
+            },
+        }
+    };
+}
+
+macro_rules! ftn_table_gen_lookup_fec {
+    ($self:ident, $key:ident) => {
+        match $self {
+            FtnTableGen::V4(_) => {
+                ftn_table_gen_lookup_fec_version!(IpAddr::V4, IpAddr::V6, $key, FTN_TABLE4);
+            }
+            FtnTableGen::V6(_) => {
+                ftn_table_gen_lookup_fec_version!(IpAddr::V4, IpAddr::V6, $key, FTN_TABLE4);
             }
         }
     };
@@ -269,32 +464,27 @@ macro_rules! ftn_table_gen_lookup {
 macro_rules! ftn_table_gen_insert_version {
     ($IpVerGood:path, $IpVerBad:path, $key:ident, $entry:ident, $table:ident) => {
         match $key {
-                FtnKey::IP(key_ip) => match key_ip.prefix {
-                    $IpVerGood(ipv) => {
-                        if !read_val!($table).contains_key(ipv.octets()) {
-                            trace!("not found, create new");
-                            write_val!($table).insert(
-                                ipv.octets(),
-                                FecEntry {
-                                    ftn_list: Vec::new(),
-                                    dependent_ftn_down_list: Vec::new(),
-                                    dependent_ilm_down_list: Vec::new(),
-                                },
-                            );
-                        }
-                        insert_list(
-                            &mut write_val!($table)
-                                .get_mut(ipv.octets())
-                                .unwrap()
-                                .ftn_list,
-                            $entry,
+            FtnKey::IP(key_ip) => match key_ip.prefix {
+                $IpVerGood(ipv) => {
+                    if !read_val!($table).contains_key(ipv.octets()) {
+                        trace!("not found, create new");
+                        write_val!($table).insert(
+                            ipv.octets(),
+                            Arc::new(ReentrantMutex::new(RefCell::new(Box::new(FecEntry::new(
+                                Vec::new(),
+                            ))))),
                         );
                     }
-                    $IpVerBad(_) => {
-                        trace!("IPvx is not expected here!");
-                    }
-                },
-            }
+                    insert_list(
+                        &mut write_val!(write_val!($table).get_mut(ipv.octets()).unwrap()).ftn_list,
+                        $entry,
+                    );
+                }
+                $IpVerBad(_) => {
+                    trace!("wrong IPversion");
+                }
+            },
+        }
     };
 }
 
@@ -312,81 +502,123 @@ macro_rules! ftn_table_gen_insert {
 }
 
 macro_rules! ftn_table_gen_remove_version {
-    ($IpVerGood:path, $IpVerBad:path, $key:ident, $ftn_ix:ident, $table:ident) => {
+    ($IpVerGood:path, $IpVerBad:path, $key:ident, $ix:ident, $table:ident) => {
         match $key {
-                FtnKey::IP(key_ip) => match key_ip.prefix {
-                    $IpVerGood(ipv) => {
-                        let removed_ftn = FtnTableGen::remove_from_list(
-                            &mut write_val!($table)
-                                .get_mut(ipv.octets())
-                                .unwrap()
-                                .ftn_list,
-                            $ftn_ix,
-                        );
-                        if removed_ftn.is_some() {
-                            let removed_ftn_unwarp = Arc::clone(&removed_ftn.unwrap());
-                            write_val!(removed_ftn_unwarp).clean_ftn_up_list();
-                            write_val!(removed_ftn_unwarp).clean_ilm_up_list();
-                        }
-                        if list_is_empty(
-                            &read_val!($table).get(ipv.octets()).unwrap().ftn_list,
-                        ) && list_is_empty(
-                            &read_val!($table)
-                                .get(ipv.octets())
-                                .unwrap()
-                                .dependent_ftn_down_list,
-                        ) && list_is_empty(
-                            &read_val!($table)
-                                .get(ipv.octets())
-                                .unwrap()
-                                .dependent_ilm_down_list,
-                        ) {
-                            write_val!($table).remove(ipv.octets());
-                        }
+            FtnKey::IP(key_ip) => match key_ip.prefix {
+                $IpVerGood(ipv) => {
+                    let removed_ftn = FtnTableGen::remove_from_list(
+                        &mut write_val!(write_val!($table).get_mut(ipv.octets()).unwrap()).ftn_list,
+                        $ix,
+                    );
+                    if removed_ftn.is_some() {
+                        trace!("removed FTN, cleaning up dependent FTNs/ILMs");
+                        let removed_ftn_unwarp = Arc::clone(&removed_ftn.unwrap());
+                        write_val!(removed_ftn_unwarp).down();
                     }
-                    $IpVerBad(_) => {
-                        trace!("IPvx is not expected here!");
+                    if list_is_empty(
+                        &read_val!(read_val!($table).get(ipv.octets()).unwrap()).ftn_list,
+                    ) {
+                        trace!("no FTNs, removing FEC entry");
+                        write_val!($table).remove(ipv.octets());
                     }
-                },
-            }
+                }
+                $IpVerBad(_) => {
+                    trace!("wrong IPversion");
+                }
+            },
+        }
     };
 }
 
 macro_rules! ftn_table_gen_remove {
-    ($self:ident, $key:ident, $ftn_ix:ident) => {
+    ($self:ident, $key:ident, $ix:ident) => {
         match $self {
             FtnTableGen::V4(_) => {
-                ftn_table_gen_remove_version!(IpAddr::V4, IpAddr::V6, $key, $ftn_ix, FTN_TABLE4);
+                ftn_table_gen_remove_version!(IpAddr::V4, IpAddr::V6, $key, $ix, FTN_TABLE4);
             }
             FtnTableGen::V6(_) => {
-                ftn_table_gen_remove_version!(IpAddr::V4, IpAddr::V6, $key, $ftn_ix, FTN_TABLE4);
+                ftn_table_gen_remove_version!(IpAddr::V4, IpAddr::V6, $key, $ix, FTN_TABLE4);
+            }
+        }
+    };
+}
+
+fn get_nhlfe_key(list: &XcList) -> Option<NhlfeKey> {
+    if list.len() == 0 {
+        trace!("xc_list is empty");
+        return None;
+    }
+    if read_val!(list[0]).nhlfe.is_none() {
+        trace!("no NHLFE for first XC");
+        return None;
+    }
+    let xc_entry = Arc::clone(&list[0]);
+    let nhlfe_entry = Arc::clone(&read_val!(xc_entry).nhlfe.as_ref().unwrap());
+    let nhlfe_key = read_val!(nhlfe_entry).nhlfe_key;
+    Some(nhlfe_key)
+}
+
+macro_rules! link_entry_to_nh_bring_up_and_dependent_version2 {
+    ($table:ident, $ver:ident, $nh:ident, $entry:ident, $nh_entry:ident, $func:ident) => {
+        NhTableGen::$ver(&$table).$func($nh.next_hop, Arc::clone(&$entry));
+        bring_entry_up!(Arc::clone(&$entry), &$nh_entry);
+        NhTableGen::$ver(&$table).process_events();
+    };
+}
+
+macro_rules! link_entry_to_nh_bring_up_and_dependent_version1 {
+    ($table:ident, $ver:ident, $nh:ident, $entry:ident, $func:ident) => {
+        match NhTableGen::$ver(&$table).lookup($nh.next_hop) {
+            Ok(nh_entry) => {
+                trace!("found NH");
+                link_entry_to_nh_bring_up_and_dependent_version2!(
+                    $table, $ver, $nh, $entry, nh_entry, $func
+                );
+            }
+            Err(_) => {
+                trace!("NH is not found");
+                let nh_entry =
+                    NhTableGen::$ver(&$table).create_modify_entry($nh.next_hop, false, false);
+                if nh_entry.is_some() {
+                    let nh_entry_unwrapped = nh_entry.unwrap();
+                    link_entry_to_nh_bring_up_and_dependent_version2!(
+                        $table,
+                        $ver,
+                        $nh,
+                        $entry,
+                        nh_entry_unwrapped,
+                        $func
+                    );
+                }
+            }
+        }
+    };
+}
+
+macro_rules! link_entry_to_nh_bring_up_and_dependent {
+    ($nh:ident, $entry:ident, $func:ident) => {
+        match $nh.next_hop {
+            IpAddr::V4(_) => {
+                link_entry_to_nh_bring_up_and_dependent_version1!(
+                    NH_TABLE4, V4, $nh, $entry, $func
+                );
+            }
+            IpAddr::V6(_) => {
+                link_entry_to_nh_bring_up_and_dependent_version1!(
+                    NH_TABLE6, V6, $nh, $entry, $func
+                );
             }
         }
     };
 }
 
 impl FtnTableGen {
-    fn lookup_list(
-        ftn_list: &FtnList,
-        on_element: &Fn(&FtnEntryWrapped) -> bool,
-    ) -> Option<FtnEntryWrapped> {
-        trace!("FtnTableGen::lookup_list");
-        let len: usize = ftn_list.len();
-        let mut i = 0;
-        while i < len {
-            if on_element(&ftn_list[i]) {
-                return Some(Arc::clone(&ftn_list[i]));
-            }
-            i += 1;
-        }
-        None
-    }
-    fn remove_from_list(ftn_list: &mut FtnList, ftn_ix: u32) -> Option<FtnEntryWrapped> {
+    fn remove_from_list(ftn_list: &mut FtnList, ix: u32) -> Option<FtnEntryWrapped> {
         trace!("FtnTableGen::remove_from_list");
         let len: usize = ftn_list.len();
         let mut i = 0;
         while i < len {
-            if read_val!(ftn_list[i]).ftn_ix == ftn_ix {
+            if read_val!(ftn_list[i]).ix == ix {
                 let removed_ftn = Arc::clone(&ftn_list[i]);
                 ftn_list.remove(i);
                 return Some(removed_ftn);
@@ -395,18 +627,42 @@ impl FtnTableGen {
         }
         None
     }
-    fn lookup(&self, key: &FtnKey, ftn_ix: u32) -> Option<FtnEntryWrapped> {
+    fn lookup_by_ix(&self, key: &FtnKey, ix: u32) -> Option<FtnEntryWrapped> {
         trace!("FtnTableGen::lookup");
-        ftn_table_gen_lookup!(self, key, ftn_ix);
+        ftn_table_gen_lookup!(self, key, ix);
+        None
+    }
+    fn lookup_by_ftn_fec(&self, key: &FtnKey) -> Option<FtnEntryWrapped> {
+        trace!("FtnTableGen::lookup");
+        ftn_table_gen_lookup_fec!(self, key);
         None
     }
     fn insert(&self, key: FtnKey, entry: FtnEntryWrapped) {
         trace!("FtnTableGen::insert");
+        let entry_clone = Arc::clone(&entry);
+        let entry_clone2 = Arc::clone(&entry_clone);
+        let entry_clone3 = Arc::clone(&entry_clone2);
         ftn_table_gen_insert!(self, key, entry);
+        let nhlfe_k: Option<NhlfeKey> = get_nhlfe_key(&*read_val!(entry_clone3).get_xc_list());
+
+        match nhlfe_k {
+            Some(nhlfe_key) => match nhlfe_key {
+                NhlfeKey::IP(nhlfe_key_ip) => {
+                    link_entry_to_nh_bring_up_and_dependent!(
+                        nhlfe_key_ip,
+                        entry_clone,
+                        add_ftn_entry_to_list
+                    );
+                }
+            },
+            None => {
+                trace!("Nhlfe is not found");
+            }
+        }
     }
-    fn remove(&self, key: &FtnKey, ftn_ix: u32) {
+    fn remove(&self, key: &FtnKey, ix: u32) {
         trace!("FtnTableGen::remove");
-        ftn_table_gen_remove!(self, key, ftn_ix);
+        ftn_table_gen_remove!(self, key, ix);
     }
 }
 
@@ -494,19 +750,30 @@ pub enum FtnKey {
 }
 
 trait MplsEntry {
-    fn get_xc_list(&mut self) -> &mut XcList;
+    fn get_xc_list(&self) -> &XcList;
+    fn get_xc_list_mut(&mut self) -> &mut XcList;
+    fn attach_to_parent(&self);
+    fn detach_from_parent(&self);
+    fn up(&mut self);
+    fn down(&mut self);
+    fn is_up(&self) -> bool;
     fn add_xc_entry(&mut self, entry: XcEntryWrapped) {
         trace!("add_xc_entry");
-        self.get_xc_list().push(entry);
+        self.get_xc_list_mut().push(entry);
     }
     fn free_xc_list(&mut self) {
         trace!("freeing xc_list");
-        let xc_list = self.get_xc_list();
-        let len: usize = xc_list.len();
-        let mut i = 0;
-        while i < len {
-            XcTableGen::XC(&XC_TABLE).remove(&write_val!(xc_list[i]).xc_key);
-            i += 1;
+        let xc_list = self.get_xc_list_mut();
+        loop {
+            match xc_list.pop() {
+                Some(xc_entry) => {
+                    write_val!(xc_entry).cleanup();
+                    XcTableGen::XC(&XC_TABLE).remove(&read_val!(xc_entry).xc_key);
+                }
+                None => {
+                    return;
+                }
+            }
         }
     }
     fn iterate_xc_list(&mut self, on_xc: &Fn(&XcEntryWrapped) -> bool) -> Option<XcEntryWrapped> {
@@ -522,83 +789,272 @@ trait MplsEntry {
         }
         None
     }
+    fn try_up(&self, nh_entry: &NhEntryWrapped) -> bool {
+        let is_up: bool;
+        let xc_list = self.get_xc_list();
+        trace!("MplsEntry::try_up");
+        if xc_list.len() == 0 {
+            trace!("xc_list is empty");
+            return false;
+        }
+        if read_val!(xc_list[0]).nhlfe.is_none() {
+            trace!("no NHLFE for first XC");
+            return false;
+        }
+        match &read_val!(xc_list[0]).nhlfe {
+            Some(nhlfe_entry) => match &read_val!(nhlfe_entry).nhlfe_key {
+                NhlfeKey::IP(nhlfe_key_ip) => match nhlfe_key_ip.next_hop {
+                    IpAddr::V4(_) => {
+                        trace!("found NH");
+                        if read_val!(nh_entry).connected {
+                            trace!("NH is connected");
+                            is_up = true;
+                        } else {
+                            trace!("NH is not connected");
+                            is_up = false;
+                        }
+                    }
+                    IpAddr::V6(_) => {
+                        trace!("found NH");
+                        if read_val!(nh_entry).connected {
+                            trace!("NH is connected");
+                            is_up = true;
+                        } else {
+                            trace!("NH is not connected");
+                            is_up = false;
+                        }
+                    }
+                },
+            },
+            None => {
+                is_up = false;
+            }
+        }
+        return is_up;
+    }
 }
 
 pub struct FtnEntry {
     fec: IpAddr,
-    ftn_ix: u32,
+    ix: u32,
     xc_list: XcList,
-    is_dependent: bool,
     dependent_ftn_up_list: FtnList,
     dependent_ilm_up_list: IlmList,
     state: bool,
 }
 
 macro_rules! clear_entry_list {
-    ($self:ident, $up_list:ident, $down_list:ident, $add_up_list:ident) => {
+    ($self:ident, $up_list:ident) => {
         loop {
             match $self.$up_list.pop() {
-                Some(dep_ftn) => {
-                    write_val!(dep_ftn).down();
-                    process_dependent_entry!(
-                        $add_up_list,
-                        $down_list,
-                        $self,
-                        fec,
-                        dep_ftn
-                    );
+                Some(dep) => {
+                    trace!("clear_entry_list: found dependent");
+                    write_val!(dep).down();
                 }
                 None => {
                     break;
                 }
             }
         }
-    }
+    };
 }
 
 impl FtnEntry {
-    fn new(fec: IpAddr, idx: u32, dependent: bool) -> FtnEntry {
+    fn new(fec: IpAddr, idx: u32) -> FtnEntry {
         FtnEntry {
             fec: fec,
-            ftn_ix: idx,
+            ix: idx,
             xc_list: Vec::new(),
-            is_dependent: dependent,
             dependent_ftn_up_list: Vec::new(),
             dependent_ilm_up_list: Vec::new(),
             state: false,
         }
     }
-    fn up(&mut self) {
-        self.state = true;
-    }
-    fn down(&mut self) {
-        self.state = false;
-        self.clean_ftn_up_list();
-        self.clean_ilm_up_list();
-    }
     fn add_to_ftn_up_list(&mut self, dep_ftn: FtnEntryWrapped) {
-        write_val!(dep_ftn).up();
+        trace!("FtnEntry::add_to_ftn_up_list");
+        //write_val!(dep_ftn).up();
         self.dependent_ftn_up_list.push(dep_ftn);
     }
     fn add_to_ilm_up_list(&mut self, dep_ilm: IlmEntryWrapped) {
-        write_val!(dep_ilm).up();
+        trace!("FtnEntry::add_to_ilm_up_list");
+        //write_val!(dep_ilm).up();
         self.dependent_ilm_up_list.push(dep_ilm);
     }
     fn clean_ftn_up_list(&mut self) {
-        clear_entry_list!(self, dependent_ftn_up_list, dependent_ftn_down_list, add_to_ftn_up_list);
+        trace!("FtnEntry::clean_ftn_up_list");
+        clear_entry_list!(self, dependent_ftn_up_list);
     }
     fn clean_ilm_up_list(&mut self) {
-        clear_entry_list!(self, dependent_ilm_up_list, dependent_ilm_down_list, add_to_ilm_up_list);
+        trace!("FtnEntry::clean_ilm_up_list");
+        clear_entry_list!(self, dependent_ilm_up_list);
     }
+}
+
+macro_rules! attach_to_parent2 {
+    ($ver:ident, $nhlfe_key_ip:ident, $dep:ident, $table:ident, $func:ident, $rc:ident) => {
+        trace!("attach_to_parent2 {}", $nhlfe_key_ip.next_hop);
+        match FtnTableGen::$ver(&$table)
+            .lookup_by_ftn_fec(&FtnKey::IP(FtnKeyIp::new($nhlfe_key_ip.next_hop)))
+        {
+            Some(parent_entry) => {
+                {
+                    trace!("found FEC {}", read_val!(parent_entry).fec);
+                }
+                {
+                    write_val!(parent_entry).$func(Arc::clone(&$dep));
+                    $rc = true;
+                }
+            }
+            None => {
+                trace!("FEC {} is not found", $nhlfe_key_ip.next_hop);
+            }
+        }
+    };
+}
+
+macro_rules! attach_to_parent1 {
+    ($self:ident, $ver:ident, $ver_other:ident, $entry_table:expr, $key:expr, $ftn_table:ident, $ftn_table_other:ident, $nh_table:ident, $func:ident, $rc:ident) => {
+        trace!("attach_to_parent1");
+        match $entry_table.lookup_by_ix($key, $self.ix) {
+            Some(dep) => match get_nhlfe_key(&$self.get_xc_list()) {
+                Some(nhlfe_key) => match nhlfe_key {
+                    NhlfeKey::IP(nhlfe_key_ip) => match nhlfe_key_ip.next_hop {
+                        IpAddr::$ver(_) => {
+                            attach_to_parent2!($ver, nhlfe_key_ip, dep, $ftn_table, $func, $rc);
+                        }
+                        IpAddr::$ver_other(_) => {
+                            attach_to_parent2!(
+                                $ver_other,
+                                nhlfe_key_ip,
+                                dep,
+                                $ftn_table_other,
+                                $func,
+                                $rc
+                            );
+                        }
+                    },
+                },
+                None => {
+                    trace!("Nhlfe is not found");
+                }
+            },
+            None => {
+                trace!("cannot find entry with id {}", $self.ix);
+            }
+        }
+        //NhTableGen::$ver(&$nh_table).create_modify_entry($self.fec, true, false);
+    };
 }
 
 impl MplsEntry for FtnEntry {
-    fn get_xc_list(&mut self) -> &mut XcList {
+    fn get_xc_list(&self) -> &XcList {
+        &self.xc_list
+    }
+    fn get_xc_list_mut(&mut self) -> &mut XcList {
         &mut self.xc_list
+    }
+    fn is_up(&self) -> bool {
+        self.state
+    }
+    fn attach_to_parent(&self) {
+        trace!("attach_to_parent");
+        let mut is_attached: bool = false;
+        match self.fec {
+            IpAddr::V4(_) => {
+                attach_to_parent1!(
+                    self,
+                    V4,
+                    V6,
+                    FtnTableGen::V4(&FTN_TABLE4),
+                    &FtnKey::IP(FtnKeyIp::new(self.fec)),
+                    FTN_TABLE4,
+                    FTN_TABLE6,
+                    NH_TABLE4,
+                    add_to_ftn_up_list,
+                    is_attached
+                );
+                if !is_attached {
+                    match get_nhlfe_key(&self.get_xc_list()) {
+                        Some(nhlfe_key) => match nhlfe_key {
+                            NhlfeKey::IP(nhlfe_key_ip) => {
+                                match NhTableGen::V4(&NH_TABLE4).lookup(nhlfe_key_ip.next_hop) {
+                                    Ok(nh) => {
+                                        is_attached = read_val!(nh).connected;
+                                    }
+                                    Err(_) => {}
+                                }
+                            }
+                        },
+                        None => {
+                            trace!("cannot retrieve NH");
+                        }
+                    }
+                }
+                if is_attached {
+                    NhTableGen::V4(&NH_TABLE4).enqueue(self.fec, true);
+                }
+            }
+            IpAddr::V6(_) => {
+                attach_to_parent1!(
+                    self,
+                    V6,
+                    V4,
+                    FtnTableGen::V6(&FTN_TABLE6),
+                    &FtnKey::IP(FtnKeyIp::new(self.fec)),
+                    FTN_TABLE6,
+                    FTN_TABLE4,
+                    NH_TABLE6,
+                    add_to_ftn_up_list,
+                    is_attached
+                );
+                if !is_attached {
+                    match get_nhlfe_key(&self.get_xc_list()) {
+                        Some(nhlfe_key) => match nhlfe_key {
+                            NhlfeKey::IP(nhlfe_key_ip) => {
+                                match NhTableGen::V4(&NH_TABLE4).lookup(nhlfe_key_ip.next_hop) {
+                                    Ok(nh) => {
+                                        is_attached = read_val!(nh).connected;
+                                    }
+                                    Err(_) => {}
+                                }
+                            }
+                        },
+                        None => {
+                            trace!("cannot retrieve NH");
+                        }
+                    }
+                }
+                if is_attached {
+                    NhTableGen::V6(&NH_TABLE6).enqueue(self.fec, true);
+                }
+            }
+        }
+    }
+    fn detach_from_parent(&self) {
+        trace!("detach_from_parent");
+        match self.fec {
+            IpAddr::V4(_) => {
+                NhTableGen::V4(&NH_TABLE4).enqueue(self.fec, false);
+            }
+            IpAddr::V6(_) => {
+                NhTableGen::V6(&NH_TABLE6).enqueue(self.fec, false);
+            }
+        }
+    }
+    fn up(&mut self) {
+        trace!("FtnEntry::up {}", self.fec);
+        self.state = true;
+    }
+    fn down(&mut self) {
+        trace!("FtnEntry::down {}", self.fec);
+        self.state = false;
+        self.clean_ftn_up_list();
+        self.clean_ilm_up_list();
+        self.detach_from_parent();
     }
 }
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash, Copy, Clone)]
 pub struct NhlfeKeyIp {
     next_hop: IpAddr,
     out_label: u32,
@@ -609,7 +1065,7 @@ pub struct NhlfeKeyIp {
     egress: IpAddr,
 }
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash, Copy, Clone)]
 pub enum NhlfeKey {
     IP(NhlfeKeyIp),
 }
@@ -701,6 +1157,7 @@ impl XcEntry {
                 trace!("No NHLFE for XC entry");
             }
         }
+        self.set_nhlfe(None);
     }
 }
 
@@ -733,33 +1190,64 @@ pub enum IlmKey {
 
 pub struct IlmEntry {
     ilm_key: IlmKey,
-    ilm_ix: u32,
+    ix: u32,
     xc_list: XcList,
     owner: u32,
     state: bool,
 }
 
 impl IlmEntry {
-    fn new(ilm_key: IlmKey, ilm_ix: u32, owner: u32) -> IlmEntry {
+    fn new(ilm_key: IlmKey, ix: u32, owner: u32) -> IlmEntry {
         IlmEntry {
             ilm_key: ilm_key,
-            ilm_ix: ilm_ix,
+            ix: ix,
             xc_list: Vec::new(),
             owner: owner,
             state: false,
         }
     }
-    fn up(&mut self) {
-        self.state = true;
-    }
-    fn down(&mut self) {
-        self.state = false;
-    }
 }
 
 impl MplsEntry for IlmEntry {
-    fn get_xc_list(&mut self) -> &mut XcList {
+    fn get_xc_list(&self) -> &XcList {
+        &self.xc_list
+    }
+    fn get_xc_list_mut(&mut self) -> &mut XcList {
         &mut self.xc_list
+    }
+    fn is_up(&self) -> bool {
+        self.state
+    }
+    fn attach_to_parent(&self) {
+        trace!("attach_to_parent");
+        let mut _is_attached: bool = false;
+        match &self.ilm_key {
+            IlmKey::PKT(pkt_key) => {
+                attach_to_parent1!(
+                    self,
+                    V4,
+                    V6,
+                    IlmTableGen::ILM(&ILM_TABLE),
+                    &IlmKey::PKT(IlmKeyPkt::new(pkt_key.in_label, pkt_key.in_iface)),
+                    FTN_TABLE4,
+                    FTN_TABLE6,
+                    NH_TABLE4,
+                    add_to_ilm_up_list,
+                    _is_attached
+                );
+            }
+        }
+    }
+    fn detach_from_parent(&self) {
+        trace!("not implemented");
+    }
+    fn up(&mut self) {
+        trace!("IlmEntry::up {}", self.ix);
+        self.state = true;
+    }
+    fn down(&mut self) {
+        trace!("IlmEntry::down {}", self.ix);
+        self.state = false;
     }
 }
 
@@ -792,10 +1280,10 @@ impl IlmTableGen {
         }
         None
     }
-    fn lookup_by_ix(&self, ilm_key: &IlmKey, ilm_ix: u32) -> Option<IlmEntryWrapped> {
+    fn lookup_by_ix(&self, ilm_key: &IlmKey, ix: u32) -> Option<IlmEntryWrapped> {
         if read_val!(&ILM_TABLE).contains_key(ilm_key) {
             return self.lookup_list(&read_val!(&ILM_TABLE)[ilm_key], &|ie| {
-                ilm_ix == read_val!(ie).ilm_ix
+                ix == read_val!(ie).ix
             });
         }
         None
@@ -810,10 +1298,26 @@ impl IlmTableGen {
         trace!("insetion to list");
         match write_val!(&ILM_TABLE).get_mut(&ilm_key) {
             Some(ll) => {
-                insert_list(ll, ilm_entry);
+                insert_list(ll, Arc::clone(&ilm_entry));
             }
             None => {
                 trace!("expected to find linked list on key {:?}", ilm_key);
+            }
+        }
+        let nhlfe_k: Option<NhlfeKey> = get_nhlfe_key(&*read_val!(ilm_entry).get_xc_list());
+
+        match nhlfe_k {
+            Some(nhlfe_key) => match nhlfe_key {
+                NhlfeKey::IP(nhlfe_key_ip) => {
+                    link_entry_to_nh_bring_up_and_dependent!(
+                        nhlfe_key_ip,
+                        ilm_entry,
+                        add_ilm_entry_to_list
+                    );
+                }
+            },
+            None => {
+                trace!("Nhlfe is not found");
             }
         }
     }
@@ -1006,28 +1510,9 @@ fn _ftn_add(ftn_add_data_int: &FtnAddDataInt) -> i32 {
             return -1;
         }
     }
-    let mut is_dependent: bool = false;
-    match ftn_add_data_int.next_hop {
-        IpAddr::V4(_) => match NhTableGen::V4(&NH_TABLE4).lookup(ftn_add_data_int.next_hop) {
-            Ok(_) => {}
-            Err(_) => {
-                is_dependent = true;
-            }
-        },
-        IpAddr::V6(_) => match NhTableGen::V6(&NH_TABLE6).lookup(ftn_add_data_int.next_hop) {
-            Ok(_) => {}
-            Err(_) => {
-                is_dependent = true;
-            }
-        },
-    }
-    trace!("FTN entry is dependent {}", is_dependent);
     let ftn_entry: FtnEntryWrapped = Arc::new(ReentrantMutex::new(RefCell::new(Box::new(
-        FtnEntry::new(ftn_add_data_int.fec, ftn_add_data_int.ftn_ix, is_dependent),
+        FtnEntry::new(ftn_add_data_int.fec, ftn_add_data_int.ftn_ix),
     ))));
-    if !is_dependent {
-        write_val!(ftn_entry).up();
-    }
     write_val!(ftn_entry).add_xc_entry(xc_entry);
     match ftn_add_data_int.fec {
         IpAddr::V4(_) => {
@@ -1090,7 +1575,7 @@ unsafe fn convert_ftn_del_to_internal(ftn_del_data: *mut FtnDelData) -> Result<F
 fn _ftn_del(ftn_del_data_int: &FtnDelDataInt) -> i32 {
     match ftn_del_data_int.fec {
         IpAddr::V4(_) => {
-            match FtnTableGen::V4(&FTN_TABLE4).lookup(
+            match FtnTableGen::V4(&FTN_TABLE4).lookup_by_ix(
                 &FtnKey::IP(FtnKeyIp::new(ftn_del_data_int.fec)),
                 ftn_del_data_int.ftn_ix,
             ) {
@@ -1108,7 +1593,7 @@ fn _ftn_del(ftn_del_data_int: &FtnDelDataInt) -> i32 {
             }
         }
         IpAddr::V6(_) => {
-            match FtnTableGen::V6(&FTN_TABLE6).lookup(
+            match FtnTableGen::V6(&FTN_TABLE6).lookup_by_ix(
                 &FtnKey::IP(FtnKeyIp::new(ftn_del_data_int.fec)),
                 ftn_del_data_int.ftn_ix,
             ) {
@@ -1292,7 +1777,7 @@ fn _ilm_update(
         None => {
             _ilm_add(ilm_add_int, ilm_key, 0, 0);
         }
-        Some(existing_xc_entry) => {
+        Some(_) => {
             trace!("updating ILM!");
         }
     }
@@ -1412,17 +1897,19 @@ pub extern "C" fn nh_add_del(nh_add_del_data: *mut NhAddDel) -> i32 {
     match addr {
         IpAddr::V4(_) => {
             if is_add {
-                NhTableGen::V4(&NH_TABLE4).insert(addr, ifindex);
+                NhTableGen::V4(&NH_TABLE4).create_modify_entry(addr, true, true);
             } else {
-                NhTableGen::V4(&NH_TABLE4).remove(addr);
+                NhTableGen::V4(&NH_TABLE4).create_modify_entry(addr, false, true);
             }
+            NhTableGen::V4(&NH_TABLE4).process_events();
         }
         IpAddr::V6(_) => {
             if is_add {
-                NhTableGen::V6(&NH_TABLE6).insert(addr, ifindex);
+                NhTableGen::V6(&NH_TABLE6).create_modify_entry(addr, true, true);
             } else {
-                NhTableGen::V6(&NH_TABLE6).remove(addr);
+                NhTableGen::V6(&NH_TABLE6).create_modify_entry(addr, false, true);
             }
+            NhTableGen::V6(&NH_TABLE6).process_events();
         }
     }
     0

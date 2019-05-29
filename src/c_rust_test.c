@@ -593,20 +593,32 @@ int c_rust_ftn_test1()
 			return -1;
 		}
 	}
+	return 0;
+}
+
+int c_rust_ftn_test2()
+{
+	FtnAddData ftn_add_data;
+	FtnDelData ftn_del_data;
+	unsigned int current_prefix;
+	unsigned int current_next_hop;
+	unsigned int current_label;
+	NhAddDel nh_add_del_data;
+
+	init_logger();
+	printf("adding first FTN entry\n");
 	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,0, &current_prefix);
 	setup_ip_addr(&ftn_add_data.fec, &current_prefix);
 	build_ip_addr(FTN_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
 	setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
 	current_label = FTN_TEST1_INITIAL_LABEL;
 	setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST1_INITIAL_IFINDEX, FTN_TEST1_INITIAL_FTN_IX);
-	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
-	nh_add_del_data.ifindex = 1;
-	nh_add_del_data.is_add = 1;
-	nh_add_del(&nh_add_del_data);
+	
 	if (ftn_add(&ftn_add_data) != 0) {
 		printf("failed here %s %d\n",__FILE__,__LINE__);
 		return -1;
 	}
+	printf("adding dependent FTN entry\n");
 	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,1, &current_prefix);
 	setup_ip_addr(&ftn_add_data.fec, &current_prefix);
 	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,0, &current_next_hop);
@@ -617,18 +629,53 @@ int c_rust_ftn_test1()
 		printf("failed here %s %d\n",__FILE__,__LINE__);
 		return -1;
 	}
+    printf("setting next hop UP for first FTN entry\n");
+	build_ip_addr(FTN_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
+	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+	nh_add_del_data.ifindex = 1;
+	nh_add_del_data.is_add = 1;
+	nh_add_del(&nh_add_del_data);
+	printf("here both FTN should be up. Bringing down NH for first FTN\n");
+	nh_add_del_data.is_add = 0;
+	nh_add_del(&nh_add_del_data);
+    printf("here both FTN should be down. Bringing up NH for first FTN\n");
+	nh_add_del_data.is_add = 1;
+	nh_add_del(&nh_add_del_data);
+	printf("here both FTN should be up. Bringing down first FTN\n");
 
 	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,0, &current_prefix);
 	setup_ip_addr(&ftn_del_data.fec, &current_prefix);
 	setup_ftn_entry_del(&ftn_del_data, FTN_TEST1_INITIAL_FTN_IX);
 	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
-	nh_add_del_data.ifindex = 1;
-	nh_add_del_data.is_add = 0;
-	nh_add_del(&nh_add_del_data);
 	if (ftn_del(&ftn_del_data) != 0) {
 		printf("failed here %s %d\n",__FILE__,__LINE__);
 		return -1;
 	}
+	printf("dependent FTN should be down. Adding first FTN again\n");
+	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,0, &current_prefix);
+	setup_ip_addr(&ftn_add_data.fec, &current_prefix);
+	build_ip_addr(FTN_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
+	setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
+	current_label = FTN_TEST1_INITIAL_LABEL;
+	setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST1_INITIAL_IFINDEX, FTN_TEST1_INITIAL_FTN_IX);
+	
+	if (ftn_add(&ftn_add_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+
+	printf("here both FTN should be up. Removing both\n");     
+
+    build_ip_addr(FTN_TEST1_INITIAL_PREFIX,0, &current_prefix);
+	setup_ip_addr(&ftn_del_data.fec, &current_prefix);
+	setup_ftn_entry_del(&ftn_del_data, FTN_TEST1_INITIAL_FTN_IX);
+	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+	if (ftn_del(&ftn_del_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+
+
 	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,1, &current_prefix);
 	setup_ip_addr(&ftn_del_data.fec, &current_prefix);
 	setup_ftn_entry_del(&ftn_del_data, FTN_TEST1_INITIAL_FTN_IX + 1);

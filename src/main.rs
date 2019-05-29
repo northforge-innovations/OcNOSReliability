@@ -11,6 +11,7 @@ mod tests {
         fn c_rust_peer_route_entry_iteration_test1() -> i32;
         fn c_rust_prefix_tree_test1() -> i32;
         fn c_rust_ftn_test1() -> i32;
+        fn c_rust_ftn_test2() -> i32;
         fn c_rust_ilm_test1() -> i32;
     }
 
@@ -72,6 +73,13 @@ mod tests {
         }
     }
     #[test]
+    fn ftn_test2() {
+        unsafe {
+            let rc = c_rust_ftn_test2();
+            assert_eq!(rc, 0);
+        }
+    }
+    #[test]
     fn ilm_test1() {
         unsafe {
             let rc = c_rust_ilm_test1();
@@ -91,6 +99,7 @@ extern "C" {
     fn c_rust_peer_route_entry_iteration_test1() -> i32;
     fn c_rust_prefix_tree_test1() -> i32;
     fn c_rust_ftn_test1() -> i32;
+    fn c_rust_ftn_test2() -> i32;
     fn c_rust_ilm_test1() -> i32;
 }
 
@@ -105,5 +114,6 @@ fn main() {
         c_rust_prefix_tree_test1();
         c_rust_ftn_test1();
         c_rust_ilm_test1();
+        c_rust_ftn_test2();
     }
 }
