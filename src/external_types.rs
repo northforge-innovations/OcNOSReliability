@@ -42,6 +42,15 @@ pub struct IlmAddData {
 
 #[repr(C)]
 #[allow(dead_code)]
+pub struct IlmLookupData {
+    pub in_label: u32,
+    pub in_iface: u32,
+    pub ilm_ix: u32,
+    pub state: bool,
+}
+
+#[repr(C)]
+#[allow(dead_code)]
 pub struct IlmDelData {
     pub in_label: u32,
     pub in_iface: u32,
@@ -58,6 +67,14 @@ pub struct FtnAddData {
     pub out_ifindex: u32,
     pub out_label_number: u32,
     pub out_label: *mut u32,
+}
+
+#[repr(C)]
+#[allow(dead_code)]
+pub struct FtnLookupData {
+    pub fec: IpAddrC,
+    pub ix: u32,
+    pub state: bool,
 }
 
 #[repr(C)]

@@ -1544,6 +1544,51 @@ pub extern "C" fn ftn_add(ftn_add_data: *mut FtnAddData) -> i32 {
     _ftn_add(&ftn_add_int)
 }
 
+#[no_mangle]
+pub extern "C" fn ftn_lookup(ftn_lookup_data: *mut FtnLookupData) -> i32 {
+    let mut fec: IpAddr;
+    let mut ix: u32;
+    trace!("ftn_lookup");
+    unsafe {
+        let mut addr_ptr: *mut u8 = (*ftn_lookup_data).fec.addr;
+        if (*ftn_lookup_data).fec.family == 1 {
+            fec = copy_ip_addr_v4_from_user(addr_ptr);
+        } else {
+            fec = copy_ip_addr_v6_from_user(addr_ptr as *mut u16);
+        }
+        ix = (*ftn_lookup_data).ix;
+    }
+    match fec {
+        IpAddr::V4(_) => {
+            match FtnTableGen::V4(&FTN_TABLE4)
+                .lookup_by_ix(&FtnKey::IP(FtnKeyIp::new(fec)), ix) {
+                    Some(e) => {
+                        unsafe {
+                            (*ftn_lookup_data).state = read_val!(e).is_up();
+                        }
+                    },
+                    None => {
+                        return -1;
+                    }
+                }
+        }
+        IpAddr::V6(_) => {
+            match FtnTableGen::V6(&FTN_TABLE6)
+                .lookup_by_ix(&FtnKey::IP(FtnKeyIp::new(fec)), ix) {
+                    Some(e) => {
+                        unsafe {
+                            (*ftn_lookup_data).state = read_val!(e).is_up();
+                        }
+                    },
+                    None => {
+                        return -1;
+                    }
+                }
+        }
+    }
+    0
+}
+
 struct FtnDelDataInt {
     fec: IpAddr,
     ftn_ix: u32,
@@ -1835,6 +1880,29 @@ pub extern "C" fn ilm_add(ilm_add_data: *mut IlmAddData) -> i32 {
         }
     }
     _ilm_add_update(&mut ilm_add_int)
+}
+
+#[no_mangle]
+pub extern "C" fn ilm_lookup(ilm_lookup_data: *mut IlmLookupData) -> i32 {
+    let mut ilm_key: IlmKey;
+    let mut ilm_ix: u32;
+    unsafe {
+       ilm_key = IlmKey::PKT(IlmKeyPkt::new((*ilm_lookup_data).in_label, (*ilm_lookup_data).in_iface));
+       ilm_ix = (*ilm_lookup_data).ilm_ix;
+    }
+    match IlmTableGen::ILM(&ILM_TABLE).lookup_by_ix(&ilm_key, ilm_ix) {
+        Some(existing_ilm) => {
+            trace!("ILM entry found");
+            unsafe {
+                (*ilm_lookup_data).state = read_val!(existing_ilm).is_up();
+            }
+        }
+        None => {
+            trace!("cannot find ILM entry");
+            return -1;
+        }
+    }
+    0
 }
 
 fn _ilm_del(ilm_del_int: &IlmDelDataInt) -> i32 {

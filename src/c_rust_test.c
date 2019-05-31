@@ -596,6 +596,13 @@ int c_rust_ftn_test1()
 	return 0;
 }
 
+#define FTN_TEST2_ENTRIES_NUMBER 1
+#define FTN_TEST2_INITIAL_PREFIX "6.6.6.6"
+#define FTN_TEST2_INITIAL_NEXT_HOP "7.7.7.7"
+#define FTN_TEST2_INITIAL_IFINDEX 12
+#define FTN_TEST2_INITIAL_FTN_IX 5
+#define FTN_TEST2_INITIAL_LABEL 200
+
 int c_rust_ftn_test2()
 {
 	FtnAddData ftn_add_data;
@@ -604,71 +611,178 @@ int c_rust_ftn_test2()
 	unsigned int current_next_hop;
 	unsigned int current_label;
 	NhAddDel nh_add_del_data;
+	FtnLookupData ftn_lookup_data;
 
 	init_logger();
 	printf("adding first FTN entry\n");
-	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,0, &current_prefix);
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,0, &current_prefix);
 	setup_ip_addr(&ftn_add_data.fec, &current_prefix);
-	build_ip_addr(FTN_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
+	build_ip_addr(FTN_TEST2_INITIAL_NEXT_HOP,0, &current_next_hop);
 	setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
-	current_label = FTN_TEST1_INITIAL_LABEL;
-	setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST1_INITIAL_IFINDEX, FTN_TEST1_INITIAL_FTN_IX);
+	current_label = FTN_TEST2_INITIAL_LABEL;
+	setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST2_INITIAL_IFINDEX, FTN_TEST2_INITIAL_FTN_IX);
 	
 	if (ftn_add(&ftn_add_data) != 0) {
 		printf("failed here %s %d\n",__FILE__,__LINE__);
 		return -1;
 	}
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = FTN_TEST2_INITIAL_FTN_IX;
+	if (ftn_lookup(&ftn_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ftn_lookup_data.state) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
 	printf("adding dependent FTN entry\n");
-	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,1, &current_prefix);
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,1, &current_prefix);
 	setup_ip_addr(&ftn_add_data.fec, &current_prefix);
-	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,0, &current_next_hop);
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,0, &current_next_hop);
 	setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
-	current_label = FTN_TEST1_INITIAL_LABEL+1;
-	setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST1_INITIAL_IFINDEX, FTN_TEST1_INITIAL_FTN_IX + 1);
+	current_label = FTN_TEST2_INITIAL_LABEL+1;
+	setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST2_INITIAL_IFINDEX, FTN_TEST2_INITIAL_FTN_IX + 1);
     if (ftn_add(&ftn_add_data) != 0) {
 		printf("failed here %s %d\n",__FILE__,__LINE__);
 		return -1;
 	}
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = FTN_TEST2_INITIAL_FTN_IX + 1;
+	if (ftn_lookup(&ftn_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ftn_lookup_data.state) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
     printf("setting next hop UP for first FTN entry\n");
-	build_ip_addr(FTN_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
+	build_ip_addr(FTN_TEST2_INITIAL_NEXT_HOP,0, &current_next_hop);
 	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
 	nh_add_del_data.ifindex = 1;
 	nh_add_del_data.is_add = 1;
 	nh_add_del(&nh_add_del_data);
 	printf("here both FTN should be up. Bringing down NH for first FTN\n");
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,0, &current_prefix);
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = FTN_TEST2_INITIAL_FTN_IX;
+	if (ftn_lookup(&ftn_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ftn_lookup_data.state == 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,1, &current_prefix);
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = FTN_TEST2_INITIAL_FTN_IX + 1;
+	if (ftn_lookup(&ftn_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ftn_lookup_data.state == 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+
 	nh_add_del_data.is_add = 0;
 	nh_add_del(&nh_add_del_data);
     printf("here both FTN should be down. Bringing up NH for first FTN\n");
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,0, &current_prefix);
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = FTN_TEST2_INITIAL_FTN_IX;
+	if (ftn_lookup(&ftn_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ftn_lookup_data.state) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,1, &current_prefix);
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = FTN_TEST2_INITIAL_FTN_IX + 1;
+	if (ftn_lookup(&ftn_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ftn_lookup_data.state) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
 	nh_add_del_data.is_add = 1;
 	nh_add_del(&nh_add_del_data);
 	printf("here both FTN should be up. Bringing down first FTN\n");
 
-	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,0, &current_prefix);
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,0, &current_prefix);
 	setup_ip_addr(&ftn_del_data.fec, &current_prefix);
-	setup_ftn_entry_del(&ftn_del_data, FTN_TEST1_INITIAL_FTN_IX);
+	setup_ftn_entry_del(&ftn_del_data, FTN_TEST2_INITIAL_FTN_IX);
 	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
 	if (ftn_del(&ftn_del_data) != 0) {
 		printf("failed here %s %d\n",__FILE__,__LINE__);
 		return -1;
 	}
 	printf("dependent FTN should be down. Adding first FTN again\n");
-	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,0, &current_prefix);
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,0, &current_prefix);
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = FTN_TEST2_INITIAL_FTN_IX;
+	if (ftn_lookup(&ftn_lookup_data) == 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,1, &current_prefix);
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = FTN_TEST2_INITIAL_FTN_IX + 1;
+	if (ftn_lookup(&ftn_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ftn_lookup_data.state != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,0, &current_prefix);
 	setup_ip_addr(&ftn_add_data.fec, &current_prefix);
-	build_ip_addr(FTN_TEST1_INITIAL_NEXT_HOP,0, &current_next_hop);
+	build_ip_addr(FTN_TEST2_INITIAL_NEXT_HOP,0, &current_next_hop);
 	setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
-	current_label = FTN_TEST1_INITIAL_LABEL;
-	setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST1_INITIAL_IFINDEX, FTN_TEST1_INITIAL_FTN_IX);
+	current_label = FTN_TEST2_INITIAL_LABEL;
+	setup_ftn_entry_add(&ftn_add_data, &current_label, FTN_TEST2_INITIAL_IFINDEX, FTN_TEST2_INITIAL_FTN_IX);
 	
 	if (ftn_add(&ftn_add_data) != 0) {
 		printf("failed here %s %d\n",__FILE__,__LINE__);
 		return -1;
 	}
 
-	printf("here both FTN should be up. Removing both\n");     
+	printf("here both FTN should be up. Removing both\n");
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,0, &current_prefix);
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = FTN_TEST2_INITIAL_FTN_IX;
+	if (ftn_lookup(&ftn_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ftn_lookup_data.state == 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,1, &current_prefix);
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = FTN_TEST2_INITIAL_FTN_IX + 1;
+	if (ftn_lookup(&ftn_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ftn_lookup_data.state == 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}     
 
-    build_ip_addr(FTN_TEST1_INITIAL_PREFIX,0, &current_prefix);
+    build_ip_addr(FTN_TEST2_INITIAL_PREFIX,0, &current_prefix);
 	setup_ip_addr(&ftn_del_data.fec, &current_prefix);
-	setup_ftn_entry_del(&ftn_del_data, FTN_TEST1_INITIAL_FTN_IX);
+	setup_ftn_entry_del(&ftn_del_data, FTN_TEST2_INITIAL_FTN_IX);
 	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
 	if (ftn_del(&ftn_del_data) != 0) {
 		printf("failed here %s %d\n",__FILE__,__LINE__);
@@ -676,11 +790,25 @@ int c_rust_ftn_test2()
 	}
 
 
-	build_ip_addr(FTN_TEST1_INITIAL_PREFIX,1, &current_prefix);
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,1, &current_prefix);
 	setup_ip_addr(&ftn_del_data.fec, &current_prefix);
-	setup_ftn_entry_del(&ftn_del_data, FTN_TEST1_INITIAL_FTN_IX + 1);
+	setup_ftn_entry_del(&ftn_del_data, FTN_TEST2_INITIAL_FTN_IX + 1);
 	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
 	if (ftn_del(&ftn_del_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,0, &current_prefix);
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = FTN_TEST2_INITIAL_FTN_IX;
+	if (ftn_lookup(&ftn_lookup_data) == 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	build_ip_addr(FTN_TEST2_INITIAL_PREFIX,1, &current_prefix);
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = FTN_TEST2_INITIAL_FTN_IX + 1;
+	if (ftn_lookup(&ftn_lookup_data) == 0) {
 		printf("failed here %s %d\n",__FILE__,__LINE__);
 		return -1;
 	}
@@ -779,5 +907,153 @@ int c_rust_ilm_test1()
 			return -1;
 		}
 	}
+	return 0;
+}
+
+#define ILM_TEST2_ENTRIES_NUMBER 1
+#define ILM_TEST2_INITIAL_NEXT_HOP "3.3.3.3"
+#define ILM_TEST2_INITIAL_IFINDEX 1
+#define ILM_TEST2_INITIAL_ILM_IX 1
+#define ILM_TEST2_INITIAL_FTN_IX 2
+#define ILM_TEST2_INITIAL_OWNER 1
+#define ILM_TEST2_INITIAL_LABEL 10
+
+int c_rust_ilm_test2()
+{
+	FtnAddData ftn_add_data;
+	FtnDelData ftn_del_data;
+	FtnLookupData ftn_lookup_data;
+	IlmAddData ilm_add_data;
+	IlmDelData ilm_del_data;
+	IlmLookupData ilm_lookup_data;
+	unsigned int current_prefix;
+	unsigned int current_next_hop;
+	unsigned int current_label;
+	NhAddDel nh_add_del_data;
+
+	init_logger();
+
+	build_ip_addr(ILM_TEST2_INITIAL_NEXT_HOP,0, &current_next_hop);
+	setup_ip_addr(&ilm_add_data.next_hop, &current_next_hop);
+	current_label = ILM_TEST2_INITIAL_LABEL ;
+	setup_ilm_entry_add(&ilm_add_data, &current_label, ILM_TEST2_INITIAL_IFINDEX, ILM_TEST2_INITIAL_OWNER, ILM_TEST2_INITIAL_ILM_IX);
+	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+	nh_add_del_data.ifindex = 1;
+	nh_add_del_data.is_add = 1;
+	nh_add_del(&nh_add_del_data);
+	if (ilm_add(&ilm_add_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	ilm_lookup_data.ilm_ix = ILM_TEST2_INITIAL_ILM_IX;
+	ilm_lookup_data.in_iface = ILM_TEST2_INITIAL_IFINDEX;
+	ilm_lookup_data.in_label = ILM_TEST2_INITIAL_LABEL;
+	if (ilm_lookup(&ilm_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ilm_lookup_data.state == 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	nh_add_del_data.is_add = 0;
+	nh_add_del(&nh_add_del_data);
+	if (ilm_lookup(&ilm_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ilm_lookup_data.state != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+
+	build_ip_addr(ILM_TEST2_INITIAL_NEXT_HOP,0, &current_prefix);
+	setup_ip_addr(&ftn_add_data.fec, &current_prefix);
+	build_ip_addr(ILM_TEST2_INITIAL_NEXT_HOP,1, &current_next_hop);
+	setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
+	current_label = ILM_TEST2_INITIAL_LABEL + 1;
+	setup_ftn_entry_add(&ftn_add_data, &current_label, ILM_TEST2_INITIAL_IFINDEX, ILM_TEST2_INITIAL_FTN_IX);
+	
+	if (ftn_add(&ftn_add_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+
+	if (ilm_lookup(&ilm_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ilm_lookup_data.state != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = ILM_TEST2_INITIAL_FTN_IX;
+	if (ftn_lookup(&ftn_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ftn_lookup_data.state) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+	nh_add_del_data.ifindex = 1;
+	nh_add_del_data.is_add = 1;
+	nh_add_del(&nh_add_del_data);
+
+	if (ilm_lookup(&ilm_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ilm_lookup_data.state == 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	setup_ip_addr(&ftn_lookup_data.fec, &current_prefix);
+	ftn_lookup_data.ix = ILM_TEST2_INITIAL_FTN_IX;
+	if (ftn_lookup(&ftn_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ftn_lookup_data.state == 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+
+	build_ip_addr(ILM_TEST2_INITIAL_NEXT_HOP,0, &current_prefix);
+	setup_ip_addr(&ftn_del_data.fec, &current_prefix);
+	setup_ftn_entry_del(&ftn_del_data, ILM_TEST2_INITIAL_FTN_IX);
+	build_ip_addr(ILM_TEST2_INITIAL_NEXT_HOP,1, &current_next_hop);
+	setup_ip_addr(&ftn_add_data.next_hop, &current_next_hop);
+	if (ftn_del(&ftn_del_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+
+	if (ilm_lookup(&ilm_lookup_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	if (ilm_lookup_data.state != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	
+	current_label = ILM_TEST2_INITIAL_LABEL;
+	setup_ilm_entry_del(&ilm_del_data, 
+						&current_label, 
+						ILM_TEST2_INITIAL_IFINDEX, 
+						ILM_TEST2_INITIAL_OWNER, 
+						ILM_TEST2_INITIAL_ILM_IX);
+	setup_ip_addr(&nh_add_del_data.addr, &current_next_hop);
+	nh_add_del_data.ifindex = 1;
+	nh_add_del_data.is_add = 0;
+	nh_add_del(&nh_add_del_data);
+	if (ilm_del(&ilm_del_data) != 0) {
+		printf("failed here %s %d\n",__FILE__,__LINE__);
+		return -1;
+	}
+	
 	return 0;
 }

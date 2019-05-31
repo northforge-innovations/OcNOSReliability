@@ -13,6 +13,7 @@ mod tests {
         fn c_rust_ftn_test1() -> i32;
         fn c_rust_ftn_test2() -> i32;
         fn c_rust_ilm_test1() -> i32;
+        fn c_rust_ilm_test2() -> i32;
     }
 
     #[test]
@@ -86,6 +87,13 @@ mod tests {
             assert_eq!(rc, 0);
         }
     }
+    #[test]
+    fn ilm_test2() {
+        unsafe {
+            let rc = c_rust_ilm_test2();
+            assert_eq!(rc, 0);
+        }
+    }
 }
 
 extern crate data_storage_api;
@@ -101,6 +109,7 @@ extern "C" {
     fn c_rust_ftn_test1() -> i32;
     fn c_rust_ftn_test2() -> i32;
     fn c_rust_ilm_test1() -> i32;
+    fn c_rust_ilm_test2() -> i32;
 }
 
 fn main() {
@@ -115,5 +124,6 @@ fn main() {
         c_rust_ftn_test1();
         c_rust_ilm_test1();
         c_rust_ftn_test2();
+        c_rust_ilm_test2();
     }
 }
